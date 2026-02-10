@@ -1,0 +1,18 @@
+# Noise sweep: vary input_noise_rate, others at default
+
+seed: 42
+
+sequence_length: 128
+vocabulary_size: 1024
+batch_size: 32
+
+num_classes: 10
+task_family_count: 4
+num_operations: 8
+
+input_noise_rates: [0.0, 0.1, 0.2, 0.3]
+label_noise_rate: 0.0
+eval_dropout: 0.0
+
+output_dir: "data/sweep_noise"
+num_batches: 50

@@ -1,0 +1,14 @@
+# Conda environment for Sequential Factor Benchmark
+name: seqfacben
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.14.3
+  - pip
+  - ipykernel
+  - pandas
+  - matplotlib
+  - tqdm
+  - pip:
+      - -e .

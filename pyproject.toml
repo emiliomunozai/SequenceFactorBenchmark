@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sequencefactorbenchmark"
+version = "0.1.0"
+description = "SeqFactorBench: sequence model benchmark under controlled scale, breadth, structure, and noise."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = "==3.14.3.*"
+
+dependencies = [
+    "PyYAML>=6.0",
+    "tqdm==4.67.1",
+    "spacy==3.8.11",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.0",
+    "pytest>=7.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
