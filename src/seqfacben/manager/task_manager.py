@@ -13,34 +13,42 @@ class TaskManager:
         self.model.train()
         x, y = self.task.get_batch(batch_size, split="train")
         x, y = x.to(self.device), y.to(self.device)
-        
-        loss = self.task.loss(self.model, (x, y))
+
+        logits = self.model(x)
+        loss = self.task.loss_fn(logits, y)
+        train_acc = (logits.argmax(dim=-1) == y).float().mean().item()
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        return loss.item()
+        return loss.item(), train_acc
 
     def eval_step(self, batch_size: int):
         self.model.eval()
         with torch.no_grad():
             x, y = self.task.get_batch(batch_size, split="eval")
             x, y = x.to(self.device), y.to(self.device)
-            return self.task.evaluate(self.model, (x, y))
+            val_loss = self.task.loss(self.model, (x, y)).item()
+            val_acc = self.task.evaluate(self.model, (x, y))
+            return val_loss, val_acc
 
-    def train(self, n_steps: int, batch_size: int = 64, eval_every: int = 100):
+    def train(self, n_steps: int, batch_size: int = 64, eval_every: int = 1000):
         self.history = []
         for step in range(n_steps):
-            loss = self.train_step(batch_size)
-            
+            train_loss, train_acc = self.train_step(batch_size)
+
             if (step + 1) % eval_every == 0:
-                acc = self.eval_step(batch_size)
+                val_loss, val_acc = self.eval_step(batch_size)
                 self.history.append({
                     'step': step + 1,
-                    'loss': loss,
-                    'accuracy': acc
+                    'train_loss': train_loss,
+                    'train_acc': train_acc,
+                    'val_loss': val_loss,
+                    'val_acc': val_acc,
                 })
-                print(f"Step {step + 1}: loss = {loss:.4f}, acc = {acc:.4f}")
-        
+                print(
+                    f"Step {step + 1}: train_loss={train_loss:.4f}, train_acc={train_acc:.4f}, "
+                    f"val_loss={val_loss:.4f}, val_acc={val_acc:.4f}"
+                )
         return self.history
 
     def show_examples(self, n_examples=5):

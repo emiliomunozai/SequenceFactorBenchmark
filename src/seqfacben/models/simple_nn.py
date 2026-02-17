@@ -25,3 +25,7 @@ class SimpleNN(BaseModel):
         x = self.net(x)  # [batch, vocab_size * seq_len]
         x = x.view(batch_size, self.seq_len, self.vocab_size)  # [batch, seq_len, vocab_size]
         return x
+
+    def reset_state(self):
+        """Stateless model: no-op."""
+        pass

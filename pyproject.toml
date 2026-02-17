@@ -1,9 +1,9 @@
 [build-system]
-requires = ["setuptools>=61", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
-name = "sequencefactorbenchmark"
+name = "sfb"
 version = "0.1.0"
 description = "SeqFactorBench: sequence model benchmark under controlled scale, breadth, structure, and noise."
 readme = "README.md"
@@ -14,13 +14,21 @@ dependencies = [
     "PyYAML>=6.0",
     "tqdm==4.67.1",
     "spacy==3.8.11",
+    "torch>=2.0",
+    "pandas>=3.0.0",
 ]
+
+[project.scripts]
+sfb = "seqfacben.cli:main"
 
 [project.optional-dependencies]
 dev = [
     "build>=1.0",
     "pytest>=7.0",
 ]
+# CUDA. Base install uses CPU-only torch from PyPI.
+# For CUDA (new GPUs, e.g. RTX 50): uv pip uninstall torch -y && uv pip install torch --index-url https://download.pytorch.org/whl/cu128
+cuda = ["torch>=2.0"]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/seqfacben"]

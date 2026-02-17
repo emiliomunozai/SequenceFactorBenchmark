@@ -1,11 +1,12 @@
 import torch
-import torch.nn.functional as F
 from seqfacben.tasks.base import BaseTask
+
 
 class SortingTask(BaseTask):
 
-    def __init__(self, generator):
+    def __init__(self, generator, loss_fn):
         self.generator = generator
+        self.loss_fn = loss_fn
 
     def get_batch(self, batch_size: int, split: str = "train"):
         x = self.generator.sample(batch_size)
@@ -15,13 +16,9 @@ class SortingTask(BaseTask):
     def loss(self, model, batch):
         x, y = batch
         logits = model(x)
-        return F.cross_entropy(
-            logits.view(-1, logits.size(-1)),
-            y.view(-1),
-        )
+        return self.loss_fn(logits, y)
 
     def evaluate(self, model, batch):
         x, y = batch
         preds = model(x).argmax(dim=-1)
-        correct = (preds == y).all(dim=1)
-        return correct.float().mean().item()
+        return (preds == y).float().mean().item()
