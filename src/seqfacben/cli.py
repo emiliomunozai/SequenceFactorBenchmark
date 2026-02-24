@@ -29,11 +29,13 @@ def _load_config(path: str) -> dict:
 
 
 # Keys that can be swept (list = dimension) or fixed (scalar). Used by sweep command.
+# model_params.* are flattened into the config (e.g. model_params.d_model -> d_model).
 SWEEP_PARAM_KEYS = [
-    "task", "loss", "sequence_length", "vocabulary_size", "d_model",
+    "model", "task", "loss", "sequence_length", "vocabulary_size", "d_model",
     "batch_size", "steps", "eval_every", "seed",
 ]
 SWEEP_DEFAULTS = {
+    "model": "simple_nn",
     "task": "sorting",
     "loss": "cross_entropy",
     "sequence_length": 32,
@@ -45,13 +47,28 @@ SWEEP_DEFAULTS = {
     "seed": None,
 }
 
+MODELS = {"simple_nn": SimpleNN}
+# Params to include in model column display for each model.
+MODEL_DISPLAY_PARAMS = {"simple_nn": ["d_model"]}
+
+
+def _flatten_model_params(config: dict) -> dict:
+    """Merge model_params into flat config. model_params.d_model -> d_model."""
+    cfg = dict(config)
+    if "model_params" in cfg and isinstance(cfg["model_params"], dict):
+        params = cfg.pop("model_params")
+        for k, v in params.items():
+            cfg[k] = v
+    return cfg
+
 
 def _expand_sweep_config(config: dict) -> list[dict]:
     """Expand a config into a list of run configs. List values → Cartesian product."""
+    cfg = _flatten_model_params(config)
     fixed = {}
     dims = {}
     for k in SWEEP_PARAM_KEYS:
-        v = config.get(k, SWEEP_DEFAULTS.get(k))
+        v = cfg.get(k, SWEEP_DEFAULTS.get(k))
         if isinstance(v, list):
             dims[k] = v
         else:
@@ -65,8 +82,29 @@ def _expand_sweep_config(config: dict) -> list[dict]:
     ]
 
 
+def _base_model_name(model_val) -> str:
+    """Extract base model name from display string like 'simple_nn(d_model=64)'."""
+    s = str(model_val or "simple_nn")
+    return s.split("(")[0].strip() if "(" in s else s
+
+
+def _format_model_column(run_config: dict) -> str:
+    """Build model column value: base name + params, e.g. 'simple_nn(d_model=64)'."""
+    model = run_config.get("model", "simple_nn")
+    base = _base_model_name(model)
+    param_names = MODEL_DISPLAY_PARAMS.get(base, [])
+    if not param_names:
+        return base
+    parts = [f"{k}={run_config.get(k)}" for k in param_names if run_config.get(k) is not None]
+    if not parts:
+        return base
+    return f"{base}({', '.join(parts)})"
+
+
 def _config_signature(cfg: dict) -> tuple:
     """Hashable signature for deduplication. cfg can be run_config (sequence_length/vocabulary_size) or row (seq_len/vocab_size)."""
+    model_val = cfg.get("model", "simple_nn")
+    model = _base_model_name(model_val)
     seq_len = cfg.get("sequence_length") or cfg.get("seq_len")
     vocab_size = cfg.get("vocabulary_size") or cfg.get("vocab_size")
     seed = cfg.get("seed")
@@ -75,6 +113,7 @@ def _config_signature(cfg: dict) -> tuple:
     elif seed is not None:
         seed = int(seed)
     return (
+        model,
         str(cfg.get("task", "")),
         str(cfg.get("loss", "")),
         int(seq_len) if seq_len is not None else None,
@@ -99,15 +138,20 @@ def _get_device(name: str) -> torch.device:
 
 
 def _build_task_and_model(args, config: dict):
-    """Resolve seq_len, vocab_size from args + config. Build generator, task, model."""
+    """Resolve seq_len, vocab_size, model from args + config. Build generator, task, model."""
     seq_len = getattr(args, "seq_len", None) or config.get("sequence_length", 32)
     vocab_size = getattr(args, "vocab_size", None) or config.get("vocabulary_size", 64)
     d_model = getattr(args, "d_model", None) or config.get("d_model", 64)
+    model_name = (getattr(args, "model", None) or config.get("model", "simple_nn")).lower()
 
     loss_name = (getattr(args, "loss", None) or config.get("loss", "cross_entropy")).lower()
     loss_fn = LOSSES.get(loss_name)
     if loss_fn is None:
         raise SystemExit(f"Unknown loss: {loss_name}. Use: {', '.join(LOSSES)}.")
+
+    model_cls = MODELS.get(model_name)
+    if model_cls is None:
+        raise SystemExit(f"Unknown model: {model_name}. Use: {', '.join(MODELS)}.")
 
     generator = RandomSequenceGenerator(seq_len=seq_len, vocab_size=vocab_size)
     task_name = (getattr(args, "task", None) or "").lower()
@@ -118,13 +162,14 @@ def _build_task_and_model(args, config: dict):
     else:
         raise SystemExit(f"Unknown task: {args.task}. Use: sorting, copy.")
 
-    model = SimpleNN(vocab_size=vocab_size, seq_len=seq_len, d_model=d_model)
+    model = model_cls(vocab_size=vocab_size, seq_len=seq_len, d_model=d_model)
     return task, model
 
 
 def _args_from_run_config(run_config: dict):
     """Build an args-like object from a flat run config (for sweep)."""
     return SimpleNamespace(
+        model=run_config.get("model", "simple_nn"),
         task=run_config.get("task", "sorting"),
         loss=run_config.get("loss", "cross_entropy"),
         seq_len=run_config.get("sequence_length"),
@@ -160,6 +205,7 @@ def _run_one_experiment(run_config: dict, device: torch.device, run_id: int) -> 
         final_val_acc = last["val_acc"]
     row = {
         "run_id": run_id,
+        "model": _format_model_column(run_config),
         "task": run_config["task"],
         "loss": run_config["loss"],
         "seq_len": run_config["sequence_length"],
@@ -231,7 +277,10 @@ def cmd_sweep(args):
         try:
             existing_df = pd.read_csv(out_path)
             existing_rows = existing_df.to_dict("records")
+            # Backfill model column for CSVs from before model was added
             for row in existing_rows:
+                if "model" not in row or (isinstance(row.get("model"), float) and pd.isna(row.get("model"))):
+                    row["model"] = "simple_nn"
                 explored_signatures.add(_config_signature(row))
             print(f"Found {len(existing_rows)} existing result(s) in {out_path}")
         except Exception as e:
@@ -252,7 +301,7 @@ def cmd_sweep(args):
     rows = []
     base_run_id = len(existing_rows)
     for i, run_config in enumerate(to_run):
-        print(f"  [{i + 1}/{n}] task={run_config['task']} seq_len={run_config['sequence_length']} (eval_every={run_config['eval_every']})")
+        print(f"  [{i + 1}/{n}] model={run_config.get("model", "simple_nn")} task={run_config['task']} seq_len={run_config['sequence_length']}")
         row = _run_one_experiment(run_config, device, run_id=base_run_id + i)
         rows.append(row)
 

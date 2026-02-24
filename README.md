@@ -1,4 +1,4 @@
-![Tests](https://github.com/<user>/<repo>/actions/workflows/test.yml/badge.svg)
+![Tests](https://github.com/emiliomunozai/SequenceFactorBenchmark/actions/workflows/test.yml/badge.svg)
 ![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)
 
 # SeqFactorBench

@@ -1,27 +1,28 @@
 """
 Unit tests to verify that experiments are reproducible given a fixed config and seed.
 """
-import pytest
 import torch
 
 from seqfacben.cli import (
     _run_one_experiment,
     _config_signature,
     _expand_sweep_config,
-    SWEEP_DEFAULTS,
+    _flatten_model_params,
+    _format_model_column,
 )
 
 
-# Fixed config for reproducibility tests. Small steps for fast tests.
+# Minimal config for fast reproducibility tests.
 REPRO_CONFIG = {
+    "model": "simple_nn",
     "task": "sorting",
     "loss": "cross_entropy",
-    "sequence_length": 16,
-    "vocabulary_size": 32,
-    "d_model": 32,
-    "batch_size": 32,
-    "steps": 200,
-    "eval_every": 100,
+    "sequence_length": 8,
+    "vocabulary_size": 16,
+    "d_model": 16,
+    "batch_size": 8,
+    "steps": 20,
+    "eval_every": 20,
     "seed": 42,
 }
 
@@ -42,6 +43,12 @@ class TestReproducibility:
 
         for key in _metric_keys():
             assert row1[key] == row2[key], f"{key} differs: {row1[key]} vs {row2[key]}"
+
+    def test_model_column_includes_params(self):
+        """Output row has model column with params, e.g. simple_nn(d_model=16)."""
+        device = torch.device("cpu")
+        row = _run_one_experiment(REPRO_CONFIG, device, run_id=0)
+        assert row["model"] == "simple_nn(d_model=16)"
 
     def test_copy_task_reproducible(self):
         """Running copy task twice with same seed yields identical metrics."""
@@ -74,33 +81,25 @@ class TestConfigSignature:
     def test_run_config_and_row_match(self):
         """Signature from run_config (sequence_length/vocabulary_size) matches row (seq_len/vocab_size)."""
         run_config = {
-            "task": "sorting",
-            "loss": "cross_entropy",
-            "sequence_length": 32,
-            "vocabulary_size": 64,
-            "d_model": 64,
-            "batch_size": 64,
-            "steps": 5000,
-            "eval_every": 1000,
-            "seed": 42,
+            "model": "simple_nn", "task": "sorting", "sequence_length": 16,
+            "vocabulary_size": 32, "d_model": 32, "seed": 42,
         }
         row = {
-            "task": "sorting",
-            "loss": "cross_entropy",
-            "seq_len": 32,
-            "vocab_size": 64,
-            "d_model": 64,
-            "batch_size": 64,
-            "steps": 5000,
-            "eval_every": 1000,
-            "seed": 42,
+            "model": "simple_nn", "task": "sorting", "seq_len": 16,
+            "vocab_size": 32, "d_model": 32, "seed": 42,
         }
         assert _config_signature(run_config) == _config_signature(row)
 
     def test_different_configs_differ(self):
         """Different configs produce different signatures."""
-        cfg_a = {"task": "sorting", "sequence_length": 32, "vocabulary_size": 64}
-        cfg_b = {"task": "sorting", "sequence_length": 64, "vocabulary_size": 64}
+        cfg_a = {"model": "simple_nn", "task": "sorting", "sequence_length": 32, "vocabulary_size": 64}
+        cfg_b = {"model": "simple_nn", "task": "sorting", "sequence_length": 64, "vocabulary_size": 64}
+        assert _config_signature(cfg_a) != _config_signature(cfg_b)
+
+    def test_different_models_differ(self):
+        """Different models produce different signatures."""
+        cfg_a = {"model": "simple_nn", "task": "sorting", "sequence_length": 32}
+        cfg_b = {"model": "other_model", "task": "sorting", "sequence_length": 32}
         assert _config_signature(cfg_a) != _config_signature(cfg_b)
 
 
@@ -118,12 +117,29 @@ class TestExpandSweepConfig:
     def test_list_expands_cartesian(self):
         """List values expand to Cartesian product."""
         config = {
+            "model": "simple_nn",
             "task": ["sorting", "copy"],
-            "sequence_length": [16, 32],
+            "sequence_length": [8, 16],
         }
         result = _expand_sweep_config(config)
         assert len(result) == 4  # 2 * 2
         tasks = {r["task"] for r in result}
         seq_lens = {r["sequence_length"] for r in result}
         assert tasks == {"sorting", "copy"}
-        assert seq_lens == {16, 32}
+        assert seq_lens == {8, 16}
+        assert all(r.get("model") == "simple_nn" for r in result)
+
+    def test_format_model_column(self):
+        """_format_model_column produces simple_nn(d_model=32)."""
+        config = {"model": "simple_nn", "task": "sorting", "d_model": 32}
+        assert _format_model_column(config) == "simple_nn(d_model=32)"
+
+    def test_model_params_flattened(self):
+        """model_params.d_model is flattened into d_model for expansion."""
+        config = {
+            "model": "simple_nn", "task": "sorting", "sequence_length": 8,
+            "model_params": {"d_model": 32},
+        }
+        result = _expand_sweep_config(config)
+        assert len(result) == 1
+        assert result[0]["d_model"] == 32
