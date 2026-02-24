@@ -1,3 +1,6 @@
+![Tests](https://github.com/<user>/<repo>/actions/workflows/test.yml/badge.svg)
+![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)
+
 # SeqFactorBench
 
 Sequence model benchmark for copy and sorting tasks under controlled scale, breadth, structure, and noise.
@@ -117,6 +120,8 @@ sfb sweep -c configs/run_sweep.yaml -o data/sweep_results.csv
 ```
 
 Use list values in the YAML to sweep; scalars are fixed. Output is saved to `data/sweep_results.csv` by default (or the path given by `-o`).
+
+**Incremental sweeps:** If the output CSV already exists, the sweep loads it, skips configurations that were already run, and appends only new results. You can safely re-run a sweep (e.g., after adding parameters to the YAML) without re-running completed experiments.
 
 ---
 

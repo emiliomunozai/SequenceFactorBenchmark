@@ -65,6 +65,28 @@ def _expand_sweep_config(config: dict) -> list[dict]:
     ]
 
 
+def _config_signature(cfg: dict) -> tuple:
+    """Hashable signature for deduplication. cfg can be run_config (sequence_length/vocabulary_size) or row (seq_len/vocab_size)."""
+    seq_len = cfg.get("sequence_length") or cfg.get("seq_len")
+    vocab_size = cfg.get("vocabulary_size") or cfg.get("vocab_size")
+    seed = cfg.get("seed")
+    if seed is None or (isinstance(seed, float) and pd.isna(seed)):
+        seed = None
+    elif seed is not None:
+        seed = int(seed)
+    return (
+        str(cfg.get("task", "")),
+        str(cfg.get("loss", "")),
+        int(seq_len) if seq_len is not None else None,
+        int(vocab_size) if vocab_size is not None else None,
+        int(cfg.get("d_model")) if cfg.get("d_model") is not None else None,
+        int(cfg.get("batch_size")) if cfg.get("batch_size") is not None else None,
+        int(cfg.get("steps")) if cfg.get("steps") is not None else None,
+        int(cfg.get("eval_every")) if cfg.get("eval_every") is not None else None,
+        seed,
+    )
+
+
 def _get_device(name: str) -> torch.device:
     if name == "auto":
         use_cuda = torch.cuda.is_available()
@@ -198,18 +220,46 @@ def cmd_sweep(args):
         expand_config = config
     device = _get_device(args.device)
     run_configs = _expand_sweep_config(expand_config)
-    n = len(run_configs)
-    print(f"Sweep: {n} run(s) from {args.config}")
-    rows = []
-    for i, run_config in enumerate(run_configs):
-        print(f"  [{i + 1}/{n}] task={run_config['task']} seq_len={run_config['sequence_length']} (eval_every={run_config['eval_every']})")
-        row = _run_one_experiment(run_config, device, run_id=i)
-        rows.append(row)
-    df = pd.DataFrame(rows)
     out_path = args.output or "data/sweep_results.csv"
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+
+    # Load already-explored configurations from existing CSV
+    existing_rows: list[dict] = []
+    explored_signatures: set[tuple] = set()
+    out_file = Path(out_path)
+    if out_file.exists():
+        try:
+            existing_df = pd.read_csv(out_path)
+            existing_rows = existing_df.to_dict("records")
+            for row in existing_rows:
+                explored_signatures.add(_config_signature(row))
+            print(f"Found {len(existing_rows)} existing result(s) in {out_path}")
+        except Exception as e:
+            print(f"Could not load existing results ({e}), starting fresh")
+
+    # Filter to configs not yet explored
+    to_run = [rc for rc in run_configs if _config_signature(rc) not in explored_signatures]
+    skipped = len(run_configs) - len(to_run)
+    if skipped:
+        print(f"Skipping {skipped} already-explored configuration(s)")
+
+    if not to_run:
+        print("No new configurations to run.")
+        return
+
+    n = len(to_run)
+    print(f"Sweep: {n} new run(s) from {args.config}")
+    rows = []
+    base_run_id = len(existing_rows)
+    for i, run_config in enumerate(to_run):
+        print(f"  [{i + 1}/{n}] task={run_config['task']} seq_len={run_config['sequence_length']} (eval_every={run_config['eval_every']})")
+        row = _run_one_experiment(run_config, device, run_id=base_run_id + i)
+        rows.append(row)
+
+    all_rows = existing_rows + rows
+    df = pd.DataFrame(all_rows)
     df.to_csv(out_path, index=False)
-    print(f"Wrote {len(rows)} rows to {out_path}")
+    print(f"Wrote {len(all_rows)} total rows to {out_path} (+{len(rows)} new)")
 
 
 def cmd_list(args):
