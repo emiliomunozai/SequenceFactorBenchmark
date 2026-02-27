@@ -26,6 +26,8 @@ dev = [
     "build>=1.0",
     "pytest>=7.0",
 ]
+# Parquet support for compact results storage (used when available)
+parquet = ["pyarrow>=14.0"]
 # CUDA. Base install uses CPU-only torch from PyPI.
 # For CUDA (new GPUs, e.g. RTX 50): uv pip uninstall torch -y && uv pip install torch --index-url https://download.pytorch.org/whl/cu128
 cuda = ["torch>=2.0"]

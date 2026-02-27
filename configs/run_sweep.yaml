@@ -1,5 +1,5 @@
 # Sweep config: list values are expanded into a grid (Cartesian product).
-# Run with: sfb sweep -c configs/run_sweep.yaml -o data/sweep_results.csv
+# Run with: sfb sweep -c configs/run_sweep.yaml
 #
 # model: simple_nn | gru
 # model_params: d_model, n_layers (for gru)

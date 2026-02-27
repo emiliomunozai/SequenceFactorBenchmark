@@ -13,6 +13,13 @@ import pandas as pd
 import torch
 
 from seqfacben.generators.random import RandomSequenceGenerator
+from seqfacben.results import (
+    default_results_path,
+    append_results,
+    overwrite_results,
+    load_existing_rows,
+    get_next_run_id,
+)
 from seqfacben.registry import (
     get_model,
     get_task,
@@ -177,6 +184,23 @@ def _build_task_and_model(args, config: dict):
     return task, model
 
 
+def _run_config_from_args(args, config: dict) -> dict:
+    """Build run_config dict from args + config (for single run summary row)."""
+    return {
+        "model": getattr(args, "model", "simple_nn"),
+        "task": getattr(args, "task", "sorting"),
+        "loss": getattr(args, "loss", "cross_entropy"),
+        "sequence_length": getattr(args, "seq_len") or config.get("sequence_length", 32),
+        "vocabulary_size": getattr(args, "vocab_size") or config.get("vocabulary_size", 64),
+        "d_model": getattr(args, "d_model") or config.get("d_model", 64),
+        "n_layers": config.get("n_layers", 1),
+        "batch_size": getattr(args, "batch_size") or config.get("batch_size", 64),
+        "steps": getattr(args, "steps", 5000),
+        "eval_every": getattr(args, "eval_every", 1000),
+        "seed": getattr(args, "seed"),
+    }
+
+
 def _args_from_run_config(run_config: dict):
     """Build an args-like object from a flat run config (for sweep)."""
     return SimpleNamespace(
@@ -255,9 +279,11 @@ def cmd_run(args):
 
     history = manager.train(n_steps=steps, batch_size=batch_size, eval_every=eval_every)
 
+    # Optional: write step-level history to file
     out_path = getattr(args, "output", None)
     if out_path:
-        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, "w", newline="") as f:
             w = csv.DictWriter(
                 f,
@@ -266,6 +292,39 @@ def cmd_run(args):
             w.writeheader()
             w.writerows(history)
         print(f"Wrote history to {out_path}")
+
+    # Append summary to main results (unless --no-append-summary)
+    append_summary = not getattr(args, "no_append_summary", False)
+    if append_summary:
+        run_config = _run_config_from_args(args, config)
+        if history:
+            last = history[-1]
+            final_train_loss = last["train_loss"]
+            final_train_acc = last["train_acc"]
+            final_val_loss = last["val_loss"]
+            final_val_acc = last["val_acc"]
+        else:
+            final_train_loss = final_train_acc = final_val_loss = final_val_acc = None
+        row = {
+            "run_id": get_next_run_id(),
+            "model": _format_model_column(run_config),
+            "task": run_config["task"],
+            "loss": run_config["loss"],
+            "seq_len": run_config["sequence_length"],
+            "vocab_size": run_config["vocabulary_size"],
+            "d_model": run_config["d_model"],
+            "n_layers": run_config.get("n_layers", 1),
+            "batch_size": run_config["batch_size"],
+            "steps": run_config["steps"],
+            "eval_every": run_config["eval_every"],
+            "seed": run_config.get("seed"),
+            "final_train_loss": final_train_loss,
+            "final_train_acc": final_train_acc,
+            "final_val_loss": final_val_loss,
+            "final_val_acc": final_val_acc,
+        }
+        results_path = append_results([row])
+        print(f"Appended summary to {results_path}")
 
 
 def cmd_sweep(args):
@@ -279,24 +338,16 @@ def cmd_sweep(args):
         expand_config = config
     device = _get_device(args.device)
     run_configs = _expand_sweep_config(expand_config)
-    out_path = args.output or "data/sweep_results.csv"
-    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
-    # Load already-explored configurations from existing CSV
+    out_path = Path(args.output) if args.output else default_results_path()
+    overwrite = getattr(args, "overwrite", False)
+
+    # Load existing results (unless overwrite)
     existing_rows: list[dict] = []
     explored_signatures: set[tuple] = set()
-    out_file = Path(out_path)
-    if out_file.exists():
+    if not overwrite and out_path.exists():
         try:
-            existing_df = pd.read_csv(out_path)
-            existing_rows = existing_df.to_dict("records")
-            # Backfill model column for CSVs from before model was added
-            for row in existing_rows:
-                if "model" not in row or (isinstance(row.get("model"), float) and pd.isna(row.get("model"))):
-                    row["model"] = "simple_nn"
-                if "n_layers" not in row or (isinstance(row.get("n_layers"), float) and pd.isna(row.get("n_layers"))):
-                    row["n_layers"] = 1
-                explored_signatures.add(_config_signature(row))
+            existing_rows, explored_signatures = load_existing_rows(out_path, _config_signature)
             print(f"Found {len(existing_rows)} existing result(s) in {out_path}")
         except Exception as e:
             print(f"Could not load existing results ({e}), starting fresh")
@@ -314,16 +365,18 @@ def cmd_sweep(args):
     n = len(to_run)
     print(f"Sweep: {n} new run(s) from {args.config}")
     rows = []
-    base_run_id = len(existing_rows)
+    base_run_id = 0 if overwrite else len(existing_rows)
     for i, run_config in enumerate(to_run):
-        print(f"  [{i + 1}/{n}] model={run_config.get("model", "simple_nn")} task={run_config['task']} seq_len={run_config['sequence_length']}")
+        print(f"  [{i + 1}/{n}] model={run_config.get('model', 'simple_nn')} task={run_config['task']} seq_len={run_config['sequence_length']}")
         row = _run_one_experiment(run_config, device, run_id=base_run_id + i)
         rows.append(row)
 
-    all_rows = existing_rows + rows
-    df = pd.DataFrame(all_rows)
-    df.to_csv(out_path, index=False)
-    print(f"Wrote {len(all_rows)} total rows to {out_path} (+{len(rows)} new)")
+    if overwrite:
+        written = overwrite_results(rows, out_path)
+        print(f"Wrote {len(rows)} rows to {written} (overwrite)")
+    else:
+        written = append_results(rows, out_path)
+        print(f"Wrote {len(existing_rows) + len(rows)} total rows to {written} (+{len(rows)} new)")
 
 
 def cmd_list(args):
@@ -400,7 +453,8 @@ def main():
     run_p.add_argument("-n", "--steps", type=int, default=5000, help="Training steps")
     run_p.add_argument("-b", "--batch-size", type=int, default=None, help="Batch size")
     run_p.add_argument("--eval-every", type=int, default=1000, help="Eval every N steps")
-    run_p.add_argument("-o", "--output", default=None, help="CSV path for step/loss/accuracy history")
+    run_p.add_argument("-o", "--output", default=None, help="Path for step-level history (optional)")
+    run_p.add_argument("--no-append-summary", action="store_true", help="Do not append summary to data/results.*")
     run_p.add_argument("-c", "--config", default=None, help="YAML config path (overrides with CLI)")
     run_p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"], help="Device")
     run_p.add_argument("--seed", type=int, default=None, help="Random seed")
@@ -419,8 +473,9 @@ def main():
     sweep_p.add_argument(
         "-o", "--output",
         default=None,
-        help="Output CSV path for summary (default: data/sweep_results.csv)",
+        help="Results path (default: data/results.parquet or .csv)",
     )
+    sweep_p.add_argument("--overwrite", action="store_true", help="Replace results file instead of appending")
     sweep_p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"], help="Device")
     sweep_p.set_defaults(func=cmd_sweep)
 
