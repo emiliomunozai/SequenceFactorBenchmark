@@ -61,6 +61,17 @@ class TestReproducibility:
         for key in _metric_keys():
             assert row1[key] == row2[key], f"{key} differs: {row1[key]} vs {row2[key]}"
 
+    def test_reverse_task_reproducible(self):
+        """Running reverse task twice with same seed yields identical metrics."""
+        config = {**REPRO_CONFIG, "task": "reverse", "model": "gru"}
+        device = torch.device("cpu")
+
+        row1 = _run_one_experiment(config, device, run_id=0)
+        row2 = _run_one_experiment(config, device, run_id=1)
+
+        for key in _metric_keys():
+            assert row1[key] == row2[key], f"{key} differs: {row1[key]} vs {row2[key]}"
+
     def test_different_seeds_diverge(self):
         """Different seeds produce different results (sanity check)."""
         device = torch.device("cpu")

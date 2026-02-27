@@ -1,6 +1,9 @@
 from torch import nn
 from seqfacben.models.base import BaseModel
+from seqfacben.registry import register_model
 
+
+@register_model("simple_nn", display_params=["d_model"], param_defaults={"d_model": 64})
 class SimpleNN(BaseModel):
     def __init__(self, vocab_size: int, seq_len: int, d_model: int):
         super().__init__()

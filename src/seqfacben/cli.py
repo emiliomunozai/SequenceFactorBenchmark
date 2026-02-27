@@ -13,9 +13,14 @@ import pandas as pd
 import torch
 
 from seqfacben.generators.random import RandomSequenceGenerator
-from seqfacben.tasks.sorting import SortingTask
-from seqfacben.tasks.copy import CopyTask
-from seqfacben.models.simple_nn import SimpleNN
+from seqfacben.registry import (
+    get_model,
+    get_task,
+    all_model_names,
+    all_task_names,
+    all_model_param_keys,
+    param_defaults_from_models,
+)
 from seqfacben.manager.task_manager import TaskManager
 from seqfacben.losses import cross_entropy
 
@@ -31,7 +36,8 @@ def _load_config(path: str) -> dict:
 # Keys that can be swept (list = dimension) or fixed (scalar). Used by sweep command.
 # model_params.* are flattened into the config (e.g. model_params.d_model -> d_model).
 SWEEP_PARAM_KEYS = [
-    "model", "task", "loss", "sequence_length", "vocabulary_size", "d_model",
+    "model", "task", "loss", "sequence_length", "vocabulary_size",
+    *sorted(all_model_param_keys()),
     "batch_size", "steps", "eval_every", "seed",
 ]
 SWEEP_DEFAULTS = {
@@ -40,16 +46,12 @@ SWEEP_DEFAULTS = {
     "loss": "cross_entropy",
     "sequence_length": 32,
     "vocabulary_size": 64,
-    "d_model": 64,
     "batch_size": 64,
     "steps": 5000,
     "eval_every": 1000,
     "seed": None,
+    **param_defaults_from_models(),
 }
-
-MODELS = {"simple_nn": SimpleNN}
-# Params to include in model column display for each model.
-MODEL_DISPLAY_PARAMS = {"simple_nn": ["d_model"]}
 
 
 def _flatten_model_params(config: dict) -> dict:
@@ -92,7 +94,8 @@ def _format_model_column(run_config: dict) -> str:
     """Build model column value: base name + params, e.g. 'simple_nn(d_model=64)'."""
     model = run_config.get("model", "simple_nn")
     base = _base_model_name(model)
-    param_names = MODEL_DISPLAY_PARAMS.get(base, [])
+    model_info = get_model(base)
+    param_names = model_info["display_params"] if model_info else []
     if not param_names:
         return base
     parts = [f"{k}={run_config.get(k)}" for k in param_names if run_config.get(k) is not None]
@@ -119,6 +122,7 @@ def _config_signature(cfg: dict) -> tuple:
         int(seq_len) if seq_len is not None else None,
         int(vocab_size) if vocab_size is not None else None,
         int(cfg.get("d_model")) if cfg.get("d_model") is not None else None,
+        int(cfg.get("n_layers")) if cfg.get("n_layers") is not None and not (isinstance(cfg.get("n_layers"), float) and pd.isna(cfg.get("n_layers"))) else 1,
         int(cfg.get("batch_size")) if cfg.get("batch_size") is not None else None,
         int(cfg.get("steps")) if cfg.get("steps") is not None else None,
         int(cfg.get("eval_every")) if cfg.get("eval_every") is not None else None,
@@ -149,20 +153,27 @@ def _build_task_and_model(args, config: dict):
     if loss_fn is None:
         raise SystemExit(f"Unknown loss: {loss_name}. Use: {', '.join(LOSSES)}.")
 
-    model_cls = MODELS.get(model_name)
-    if model_cls is None:
-        raise SystemExit(f"Unknown model: {model_name}. Use: {', '.join(MODELS)}.")
+    model_info = get_model(model_name)
+    if model_info is None:
+        raise SystemExit(f"Unknown model: {model_name}. Use: {', '.join(all_model_names())}.")
 
     generator = RandomSequenceGenerator(seq_len=seq_len, vocab_size=vocab_size)
     task_name = (getattr(args, "task", None) or "").lower()
-    if task_name == "sorting":
-        task = SortingTask(generator, loss_fn=loss_fn)
-    elif task_name == "copy":
-        task = CopyTask(generator, loss_fn=loss_fn)
-    else:
-        raise SystemExit(f"Unknown task: {args.task}. Use: sorting, copy.")
+    task_info = get_task(task_name)
+    if task_info is None:
+        raise SystemExit(f"Unknown task: {args.task}. Use: {', '.join(all_task_names())}.")
 
-    model = model_cls(vocab_size=vocab_size, seq_len=seq_len, d_model=d_model)
+    task = task_info["cls"](generator, loss_fn=loss_fn)
+
+    # Build model from constructor params
+    param_names = model_info["constructor_params"]
+    defaults = model_info.get("param_defaults", {})
+    model_kwargs = {
+        "vocab_size": vocab_size,
+        "seq_len": seq_len,
+        **{k: config.get(k, defaults.get(k, SWEEP_DEFAULTS.get(k))) for k in param_names if k not in ("vocab_size", "seq_len")},
+    }
+    model = model_info["cls"](**model_kwargs)
     return task, model
 
 
@@ -175,6 +186,7 @@ def _args_from_run_config(run_config: dict):
         seq_len=run_config.get("sequence_length"),
         vocab_size=run_config.get("vocabulary_size"),
         d_model=run_config.get("d_model"),
+        n_layers=run_config.get("n_layers", 1),
         batch_size=run_config.get("batch_size"),
         steps=run_config.get("steps"),
         eval_every=run_config.get("eval_every"),
@@ -211,6 +223,7 @@ def _run_one_experiment(run_config: dict, device: torch.device, run_id: int) -> 
         "seq_len": run_config["sequence_length"],
         "vocab_size": run_config["vocabulary_size"],
         "d_model": run_config["d_model"],
+        "n_layers": run_config.get("n_layers", 1),
         "batch_size": run_config["batch_size"],
         "steps": run_config["steps"],
         "eval_every": run_config["eval_every"],
@@ -281,6 +294,8 @@ def cmd_sweep(args):
             for row in existing_rows:
                 if "model" not in row or (isinstance(row.get("model"), float) and pd.isna(row.get("model"))):
                     row["model"] = "simple_nn"
+                if "n_layers" not in row or (isinstance(row.get("n_layers"), float) and pd.isna(row.get("n_layers"))):
+                    row["n_layers"] = 1
                 explored_signatures.add(_config_signature(row))
             print(f"Found {len(existing_rows)} existing result(s) in {out_path}")
         except Exception as e:
@@ -314,8 +329,10 @@ def cmd_sweep(args):
 def cmd_list(args):
     if args.tasks:
         print("Tasks:")
-        print("  sorting  – sort input sequence")
-        print("  copy     – copy input to output")
+        for name in all_task_names():
+            info = get_task(name)
+            desc = info["description"] if info else ""
+            print(f"  {name:12} – {desc}")
         return
     if args.losses:
         print("Losses:")
@@ -323,7 +340,10 @@ def cmd_list(args):
         return
     if args.models:
         print("Models:")
-        print("  simple_nn  – MLP over flattened sequence (vocab_size, seq_len, d_model)")
+        for name in all_model_names():
+            info = get_model(name)
+            params = info["constructor_params"] if info else []
+            print(f"  {name:12} – ({', '.join(params)})")
         return
     if args.config:
         # Try repo config if running from source; else show CLI defaults
@@ -346,8 +366,8 @@ def cmd_list(args):
     # default: summary
     print("SeqFactorBench (sfb) – sequence model benchmark")
     print()
-    print("Tasks:   sorting, copy")
-    print("Models:  simple_nn")
+    print(f"Tasks:   {', '.join(all_task_names())}")
+    print(f"Models:  {', '.join(all_model_names())}")
     print("Losses:  cross_entropy")
     print()
     print("Usage:   sfb run --task <task> [options]")
@@ -371,7 +391,7 @@ def main():
 
     # run
     run_p = subparsers.add_parser("run", help="Run a single benchmark (task + model)")
-    run_p.add_argument("-t", "--task", required=True, choices=["sorting", "copy"], help="Task name")
+    run_p.add_argument("-t", "--task", required=True, choices=all_task_names(), help="Task name")
     run_p.add_argument("-m", "--model", default="simple_nn", help="Model name (default: simple_nn)")
     run_p.add_argument("-l", "--loss", default="cross_entropy", choices=list(LOSSES), help="Loss function (default: cross_entropy)")
     run_p.add_argument("--seq-len", type=int, default=None, help="Sequence length")

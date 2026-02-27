@@ -1,8 +1,8 @@
 # Sweep config: list values are expanded into a grid (Cartesian product).
 # Run with: sfb sweep -c configs/run_sweep.yaml -o data/sweep_results.csv
 #
-# model: model name (simple_nn for now)
-# model_params: model-specific parameters (d_model for simple_nn)
+# model: simple_nn | gru
+# model_params: d_model, n_layers (for gru)
 # This example runs 2 tasks x 3 seq lengths x 2 vocab sizes = 12 experiments.
 
 task: [sorting, copy]

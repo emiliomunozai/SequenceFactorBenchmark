@@ -3,7 +3,7 @@
 
 # SeqFactorBench
 
-Sequence model benchmark for copy and sorting tasks under controlled scale, breadth, structure, and noise.
+Sequence model benchmark for copy, sorting, and reverse tasks under controlled scale, breadth, structure, and noise.
 
 ---
 
@@ -105,6 +105,9 @@ sfb version
 # Sorting task, 5000 steps
 sfb run --task sorting --seq-len 32 --vocab-size 64 --steps 5000 --output results.csv
 
+# Reverse task with GRU (sequence-oriented)
+sfb run -t reverse -m gru --seq-len 32 --steps 5000 -o reverse.csv
+
 # Copy task with custom batch size and custom eval interval
 sfb run -t copy -b 128 --eval-every 200 -o copy_run.csv
 
@@ -129,8 +132,8 @@ Use list values in the YAML to sweep; scalars are fixed. Output is saved to `dat
 
 | Option         | Short | Description                       |
 | -------------- |-------|-----------------------------------|
-| `--task`       | `-t`  | sorting or copy                   |
-| `--model`      | `-m`  | Model (default: simple_nn)        |
+| `--task`       | `-t`  | sorting, copy, reverse            |
+| `--model`      | `-m`  | simple_nn or gru (default: simple_nn) |
 | `--loss`       | `-l`  | Loss (default: cross_entropy)     |
 | `--seq-len`    |       | Sequence length                   |
 | `--vocab-size` |       | Vocabulary size                   |
@@ -152,5 +155,47 @@ Use list values in the YAML to sweep; scalars are fixed. Output is saved to `dat
 | `--device` |       | auto, cpu, or cuda                             |
 
 **Device / CUDA:** The CLI uses `--device auto` by default (GPU if available). If you see "cpu (GPU not available)", replace torch with the CUDA build (see [Install the project](#install-the-project-cpu-by-default) above).
+
+---
+
+### 3. Adding Custom Models and Tasks (Registry)
+
+Models and tasks self-register via decorators. **No CLI changes needed** when adding a new model or task.
+
+**Add a model:** create `src/seqfacben/models/my_model.py`:
+
+```python
+from seqfacben.registry import register_model
+from seqfacben.models.base import BaseModel
+
+@register_model(
+    "my_model",
+    display_params=["d_model"],
+    constructor_params=["vocab_size", "seq_len", "d_model"],
+    param_defaults={"d_model": 64},
+)
+class MyModel(BaseModel):
+    # Implement forward(), reset_state()
+    ...
+```
+
+**Add a task:** create `src/seqfacben/tasks/my_task.py`:
+
+```python
+from seqfacben.registry import register_task
+from seqfacben.tasks.base import BaseTask
+
+@register_task("my_task", description="what it does")
+class MyTask(BaseTask):
+    # Implement get_batch(), loss(), evaluate()
+    ...
+```
+
+Registry options:
+- **display_params** – params shown in sweep CSV model column (e.g. `simple_nn(d_model=64)`)
+- **constructor_params** – args passed to model `__init__`
+- **param_defaults** – defaults for sweep/run (e.g. `n_layers=1` for GRU)
+
+Run `sfb list --tasks` and `sfb list --models` to see registered items.
 
 ---
