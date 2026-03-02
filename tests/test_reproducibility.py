@@ -85,6 +85,19 @@ class TestReproducibility:
         diffs = [row1[k] != row2[k] for k in _metric_keys()]
         assert any(diffs), "Expected different seeds to produce different results"
 
+    def test_target_noise_degrades_metrics(self):
+        """Higher target_noise yields worse (or equal) accuracy than no noise."""
+        device = torch.device("cpu")
+        cfg_clean = {**REPRO_CONFIG, "target_noise": 0.0}
+        cfg_noisy = {**REPRO_CONFIG, "target_noise": 0.2}
+
+        row_clean = _run_one_experiment(cfg_clean, device, run_id=0)
+        row_noisy = _run_one_experiment(cfg_noisy, device, run_id=1)
+
+        assert row_clean["final_val_acc"] >= row_noisy["final_val_acc"], (
+            f"Expected clean ({row_clean['final_val_acc']}) >= noisy ({row_noisy['final_val_acc']})"
+        )
+
 
 class TestConfigSignature:
     """Verify config signature for sweep deduplication."""
@@ -93,13 +106,19 @@ class TestConfigSignature:
         """Signature from run_config (sequence_length/vocabulary_size) matches row (seq_len/vocab_size)."""
         run_config = {
             "model": "simple_nn", "task": "sorting", "sequence_length": 16,
-            "vocabulary_size": 32, "d_model": 32, "seed": 42,
+            "vocabulary_size": 32, "target_noise": 0.0, "d_model": 32, "seed": 42,
         }
         row = {
             "model": "simple_nn", "task": "sorting", "seq_len": 16,
-            "vocab_size": 32, "d_model": 32, "seed": 42,
+            "vocab_size": 32, "target_noise": 0.0, "d_model": 32, "seed": 42,
         }
         assert _config_signature(run_config) == _config_signature(row)
+
+    def test_different_target_noise_differs(self):
+        """Different target_noise produces different config signatures."""
+        cfg_a = {"model": "simple_nn", "task": "sorting", "target_noise": 0.0}
+        cfg_b = {"model": "simple_nn", "task": "sorting", "target_noise": 0.2}
+        assert _config_signature(cfg_a) != _config_signature(cfg_b)
 
     def test_different_configs_differ(self):
         """Different configs produce different signatures."""
@@ -154,3 +173,14 @@ class TestExpandSweepConfig:
         result = _expand_sweep_config(config)
         assert len(result) == 1
         assert result[0]["d_model"] == 32
+
+    def test_target_noise_expands_in_sweep(self):
+        """target_noise as list expands in sweep config."""
+        config = {
+            "model": "simple_nn", "task": "sorting", "sequence_length": 8,
+            "target_noise": [0.0, 0.1, 0.2],
+        }
+        result = _expand_sweep_config(config)
+        assert len(result) == 3
+        noises = {r["target_noise"] for r in result}
+        assert noises == {0.0, 0.1, 0.2}

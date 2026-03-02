@@ -46,7 +46,7 @@ def _load_config(path: str) -> dict:
 # Keys that can be swept (list = dimension) or fixed (scalar). Used by sweep command.
 # model_params.* are flattened into the config (e.g. model_params.d_model -> d_model).
 SWEEP_PARAM_KEYS = [
-    "model", "task", "loss", "sequence_length", "vocabulary_size",
+    "model", "task", "loss", "sequence_length", "vocabulary_size", "target_noise",
     *sorted(all_model_param_keys()),
     "batch_size", "steps", "eval_every", "seed",
 ]
@@ -56,6 +56,7 @@ SWEEP_DEFAULTS = {
     "loss": "cross_entropy",
     "sequence_length": 32,
     "vocabulary_size": 64,
+    "target_noise": 0.0,
     "batch_size": 64,
     "steps": 5000,
     "eval_every": 1000,
@@ -125,6 +126,11 @@ def _config_signature(cfg: dict) -> tuple:
         seed = None
     elif seed is not None:
         seed = int(seed)
+    target_noise = cfg.get("target_noise")
+    if target_noise is not None and not (isinstance(target_noise, float) and pd.isna(target_noise)):
+        target_noise = float(target_noise)
+    else:
+        target_noise = None
     return (
         model,
         str(cfg.get("task", "")),
@@ -136,6 +142,7 @@ def _config_signature(cfg: dict) -> tuple:
         int(cfg.get("batch_size")) if cfg.get("batch_size") is not None else None,
         int(cfg.get("steps")) if cfg.get("steps") is not None else None,
         int(cfg.get("eval_every")) if cfg.get("eval_every") is not None else None,
+        target_noise,
         seed,
     )
 
@@ -195,6 +202,7 @@ def _run_config_from_args(args, config: dict) -> dict:
         "loss": getattr(args, "loss", "cross_entropy"),
         "sequence_length": getattr(args, "seq_len") or config.get("sequence_length", 32),
         "vocabulary_size": getattr(args, "vocab_size") or config.get("vocabulary_size", 64),
+        "target_noise": getattr(args, "target_noise", None) or config.get("target_noise", 0.0),
         "d_model": getattr(args, "d_model") or config.get("d_model", 64),
         "n_layers": config.get("n_layers", 1),
         "batch_size": getattr(args, "batch_size") or config.get("batch_size", 64),
@@ -212,6 +220,7 @@ def _args_from_run_config(run_config: dict):
         loss=run_config.get("loss", "cross_entropy"),
         seq_len=run_config.get("sequence_length"),
         vocab_size=run_config.get("vocabulary_size"),
+        target_noise=run_config.get("target_noise", 0.0),
         d_model=run_config.get("d_model"),
         n_layers=run_config.get("n_layers", 1),
         batch_size=run_config.get("batch_size"),
@@ -229,7 +238,8 @@ def _run_one_experiment(run_config: dict, device: torch.device, run_id: int) -> 
     task, model = _build_task_and_model(args, run_config)
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    manager = TaskManager(task=task, model=model, optimizer=optimizer, device=device)
+    target_noise = float(run_config.get("target_noise", 0.0))
+    manager = TaskManager(task=task, model=model, optimizer=optimizer, device=device, target_noise=target_noise)
     steps = int(run_config.get("steps", SWEEP_DEFAULTS["steps"]))
     batch_size = int(run_config.get("batch_size", SWEEP_DEFAULTS["batch_size"]))
     eval_every = int(run_config.get("eval_every", SWEEP_DEFAULTS["eval_every"]))
@@ -249,6 +259,7 @@ def _run_one_experiment(run_config: dict, device: torch.device, run_id: int) -> 
         "loss": run_config["loss"],
         "seq_len": run_config["sequence_length"],
         "vocab_size": run_config["vocabulary_size"],
+        "target_noise": run_config.get("target_noise", 0.0),
         "d_model": run_config["d_model"],
         "n_layers": run_config.get("n_layers", 1),
         "batch_size": run_config["batch_size"],
@@ -275,7 +286,8 @@ def cmd_run(args):
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-    manager = TaskManager(task=task, model=model, optimizer=optimizer, device=device)
+    target_noise = getattr(args, "target_noise", None) or config.get("target_noise", 0.0)
+    manager = TaskManager(task=task, model=model, optimizer=optimizer, device=device, target_noise=target_noise)
     steps = getattr(args, "steps", 5000)
     batch_size = getattr(args, "batch_size", None) or config.get("batch_size", 64)
     eval_every = getattr(args, "eval_every", 1000)
@@ -321,6 +333,7 @@ def cmd_run(args):
             "loss": run_config["loss"],
             "seq_len": run_config["sequence_length"],
             "vocab_size": run_config["vocabulary_size"],
+            "target_noise": run_config.get("target_noise", 0.0),
             "d_model": run_config["d_model"],
             "n_layers": run_config.get("n_layers", 1),
             "batch_size": run_config["batch_size"],
@@ -369,19 +382,16 @@ def cmd_sweep(args):
 
     n = len(to_run)
     print(f"Sweep: {n} new run(s) from {args.config}")
-    rows = []
     base_run_id = 0 if overwrite else len(existing_rows)
     for i, run_config in enumerate(to_run):
         print(f"  [{i + 1}/{n}] model={run_config.get('model', 'simple_nn')} task={run_config['task']} seq_len={run_config['sequence_length']}")
         row = _run_one_experiment(run_config, device, run_id=base_run_id + i)
-        rows.append(row)
+        if overwrite and i == 0:
+            overwrite_results([row], out_path)
+        else:
+            append_results([row], out_path)
 
-    if overwrite:
-        written = overwrite_results(rows, out_path)
-        print(f"Wrote {len(rows)} rows to {written} (overwrite)")
-    else:
-        written = append_results(rows, out_path)
-        print(f"Wrote {len(existing_rows) + len(rows)} total rows to {written} (+{len(rows)} new)")
+    print(f"Sweep complete: {len(to_run)} result(s) saved to {out_path}")
 
 
 def cmd_list(args):
@@ -452,7 +462,13 @@ def _resolve_save_path(save: str | None) -> Path | None:
 
 def cmd_report(args):
     """Report and visualize results."""
-    from seqfacben.analysis import load_results, filter_results, plot_metrics_grid, plot_learning_curve
+    from seqfacben.analysis import (
+        load_results,
+        filter_results,
+        plot_metrics_grid,
+        plot_learning_curve,
+        plot_sensitivity,
+    )
 
     sub = getattr(args, "report_subcommand", "metrics")
     save_path = _resolve_save_path(args.save)
@@ -470,6 +486,37 @@ def cmd_report(args):
             plt.show()
         elif save_path:
             print(f"Saved learning curve plot to {save_path}")
+    elif sub in ("noise", "seq-len", "vocab"):
+        df = load_results(args.results)
+        if df.empty:
+            print("No results found. Run experiments first.")
+            return
+        df = filter_results(
+            df,
+            task=args.task or None,
+            model=args.model or None,
+            seq_len=args.seq_len or None,
+            vocab_size=args.vocab_size or None,
+            target_noise=args.target_noise if getattr(args, "target_noise", None) is not None else None,
+        )
+        if df.empty:
+            print("No results match the filters.")
+            return
+        x_col = {"noise": "target_noise", "seq-len": "seq_len", "vocab": "vocab_size"}.get(sub, "target_noise")
+        fig = plot_sensitivity(
+            df,
+            x_col=x_col,
+            metric=args.metric,
+            facet_by=args.facet_by if getattr(args, "facet_by", None) else "task",
+            save=save_path,
+        )
+        if fig and not save_path:
+            import matplotlib.pyplot as plt
+            plt.show()
+        elif save_path and fig:
+            print(f"Saved sensitivity plot to {save_path}")
+        elif not fig:
+            print(f"Need at least 2 {x_col} levels in the data. Sweep over {x_col}.")
     else:
         # metrics grid
         df = load_results(args.results)
@@ -482,6 +529,7 @@ def cmd_report(args):
             model=args.model or None,
             seq_len=args.seq_len or None,
             vocab_size=args.vocab_size or None,
+            target_noise=args.target_noise if getattr(args, "target_noise", None) is not None else None,
         )
         if df.empty:
             print("No results match the filters.")
@@ -515,6 +563,7 @@ def main():
     run_p.add_argument("-l", "--loss", default="cross_entropy", choices=list(LOSSES), help="Loss function (default: cross_entropy)")
     run_p.add_argument("--seq-len", type=int, default=None, help="Sequence length")
     run_p.add_argument("--vocab-size", type=int, default=None, help="Vocabulary size")
+    run_p.add_argument("--target-noise", type=float, default=None, help="Label noise rate [0-1] during training (0 = none)")
     run_p.add_argument("--d-model", type=int, default=None, help="Model hidden dimension")
     run_p.add_argument("-n", "--steps", type=int, default=5000, help="Training steps")
     run_p.add_argument("-b", "--batch-size", type=int, default=None, help="Batch size")
@@ -555,6 +604,7 @@ def main():
     report_p.add_argument("--model", type=str, default=None, help="Filter by model (base name)")
     report_p.add_argument("--seq-len", type=int, default=None, help="Filter by seq_len")
     report_p.add_argument("--vocab-size", type=int, default=None, help="Filter by vocab_size")
+    report_p.add_argument("--target-noise", type=float, default=None, help="Filter by target_noise")
     report_p.add_argument("--x", default="seq_len", help="Column for x axis (default: seq_len)")
     report_p.add_argument("--y", default="task", help="Column for y axis (default: task)")
     report_p.add_argument("--metric", default="final_val_acc", help="Metric to show (default: final_val_acc)")
@@ -566,6 +616,24 @@ def main():
     curve_p.add_argument("trace_path", help="Path to trace CSV (from sfb run --trace or -o)")
     curve_p.add_argument("--save", default=None, help="Save figure to path (bare filename -> data/figures/)")
     curve_p.set_defaults(func=cmd_report, report_subcommand="curve")
+    # noise: sfb report noise — metric vs target_noise (line plot)
+    noise_p = report_sub.add_parser("noise", help="Plot metric vs target_noise (noise sensitivity)")
+    noise_p.add_argument("--metric", default="final_val_acc", help="Metric (default: final_val_acc)")
+    noise_p.add_argument("--facet-by", default="task", help="Subplot by column (default: task)")
+    noise_p.add_argument("--save", default=None, help="Save figure to path (bare filename -> data/figures/)")
+    noise_p.set_defaults(func=cmd_report, report_subcommand="noise")
+    # seq-len: sfb report seq-len — metric vs seq_len (sequence length sensitivity)
+    seqlen_p = report_sub.add_parser("seq-len", help="Plot metric vs seq_len (sequence length sensitivity)")
+    seqlen_p.add_argument("--metric", default="final_val_acc", help="Metric (default: final_val_acc)")
+    seqlen_p.add_argument("--facet-by", default="task", help="Subplot by column (default: task)")
+    seqlen_p.add_argument("--save", default=None, help="Save figure to path (bare filename -> data/figures/)")
+    seqlen_p.set_defaults(func=cmd_report, report_subcommand="seq-len")
+    # vocab: sfb report vocab — metric vs vocab_size (vocabulary size sensitivity)
+    vocab_p = report_sub.add_parser("vocab", help="Plot metric vs vocab_size (vocabulary size sensitivity)")
+    vocab_p.add_argument("--metric", default="final_val_acc", help="Metric (default: final_val_acc)")
+    vocab_p.add_argument("--facet-by", default="task", help="Subplot by column (default: task)")
+    vocab_p.add_argument("--save", default=None, help="Save figure to path (bare filename -> data/figures/)")
+    vocab_p.set_defaults(func=cmd_report, report_subcommand="vocab")
 
     # list
     list_p = subparsers.add_parser("list", help="List tasks, models, or default config")

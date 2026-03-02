@@ -59,6 +59,8 @@ def _read_csv(path: Path) -> list[dict]:
             row["model"] = "simple_nn"
         if "n_layers" not in row or (isinstance(row.get("n_layers"), float) and pd.isna(row.get("n_layers"))):
             row["n_layers"] = 1
+        if "target_noise" not in row or (isinstance(row.get("target_noise"), float) and pd.isna(row.get("target_noise"))):
+            row["target_noise"] = 0.0
     return rows
 
 

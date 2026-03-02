@@ -1,18 +1,33 @@
 import torch
 import pandas as pd
 
+
+def _corrupt_targets(y: torch.Tensor, vocab_size: int, noise_rate: float) -> torch.Tensor:
+    """Corrupt a fraction of target tokens with random wrong labels (train-time only)."""
+    if noise_rate <= 0 or vocab_size <= 1:
+        return y
+    mask = torch.rand_like(y, dtype=torch.float32, device=y.device) < noise_rate
+    wrong = torch.randint(0, vocab_size, y.shape, device=y.device, dtype=y.dtype)
+    wrong = torch.where(wrong == y, (y + 1) % vocab_size, wrong)  # ensure wrong != y
+    return torch.where(mask, wrong, y)
+
+
 class TaskManager:
-    def __init__(self, task, model, optimizer, device):
+    def __init__(self, task, model, optimizer, device, target_noise: float = 0.0):
         self.task = task
         self.model = model
         self.optimizer = optimizer
         self.device = device
+        self.target_noise = float(target_noise)
+        self.vocab_size = getattr(task.generator, "vocab_size", None)
         self.history = []
 
     def train_step(self, batch_size: int):
         self.model.train()
         x, y = self.task.get_batch(batch_size, split="train")
         x, y = x.to(self.device), y.to(self.device)
+        if self.target_noise > 0 and self.vocab_size is not None:
+            y = _corrupt_targets(y, self.vocab_size, self.target_noise)
 
         logits = self.model(x)
         loss = self.task.loss_fn(logits, y)

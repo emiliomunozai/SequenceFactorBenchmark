@@ -130,10 +130,16 @@ sfb run -t sorting -c configs/generation_default.yaml --steps 2000
 ```bash
 sfb sweep -c configs/run_sweep.yaml
 
-# Visualize (metrics grid, learning curve)
+# Visualize (metrics grid, learning curve, noise sensitivity)
 sfb report
 sfb report --save metrics.png                    # saves to data/figures/metrics.png
 sfb report curve data/traces/sorting_simple_nn_*.csv --save curve.png   # plot trace, save to data/figures/
+
+# Analyze the three dials: faceted heatmaps or line plots
+sfb report --x seq_len --y vocab_size --facet-by target_noise --save heatmaps_by_noise.png
+sfb report noise --save noise_sensitivity.png      # line plot: metric vs target_noise
+sfb report seq-len --save seq_len_sensitivity.png  # line plot: metric vs seq_len
+sfb report vocab --save vocab_sensitivity.png      # line plot: metric vs vocab_size
 ```
 
 ---
@@ -147,6 +153,7 @@ sfb report curve data/traces/sorting_simple_nn_*.csv --save curve.png   # plot t
 | `--loss`       | `-l`  | Loss (default: cross_entropy)     |
 | `--seq-len`    |       | Sequence length                   |
 | `--vocab-size` |       | Vocabulary size                   |
+| `--target-noise` |     | Label noise rate [0-1] during training (0 = none) |
 | `--d-model`    |       | Model hidden dimension            |
 | `--steps`      | `-n`  | Training steps                    |
 | `--batch-size` | `-b`  | Batch size                        |
@@ -157,6 +164,17 @@ sfb report curve data/traces/sorting_simple_nn_*.csv --save curve.png   # plot t
 | `--config`     | `-c`  | YAML config path                  |
 | `--device`     |       | auto, cpu, or cuda                |
 | `--seed`       |       | Random seed                       |
+
+#### Analyzing the three dials (seq_len, vocab_size, target_noise)
+
+| Report mode | Command | Use case |
+| ----------- | ------- | -------- |
+| Metrics heatmap | `sfb report --x seq_len --y vocab_size --facet-by model` | 2D grid, one subplot per model |
+| Heatmaps by noise | `sfb report --x seq_len --y vocab_size --facet-by target_noise` | Same grid, one subplot per noise level |
+| Noise sensitivity | `sfb report noise --save noise.png` | Line plot: metric vs target_noise |
+| Seq length sensitivity | `sfb report seq-len --save seq_len.png` | Line plot: metric vs seq_len |
+| Vocab size sensitivity | `sfb report vocab --save vocab.png` | Line plot: metric vs vocab_size |
+| Dial on axis | `sfb report --x target_noise --y task` | Any dial on x-axis (e.g. target_noise: 0, 0.1, 0.2) |
 
 #### `sfb sweep` Options
 

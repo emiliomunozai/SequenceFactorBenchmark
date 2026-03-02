@@ -8,7 +8,7 @@ import pandas as pd
 
 from seqfacben.results import default_results_path
 
-CONFIG_COLS = ["task", "loss", "seq_len", "vocab_size", "d_model", "model"]
+CONFIG_COLS = ["task", "loss", "seq_len", "vocab_size", "target_noise", "d_model", "model"]
 
 
 def load_results(path: str | Path | None = None) -> pd.DataFrame:

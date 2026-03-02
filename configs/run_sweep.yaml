@@ -1,17 +1,20 @@
 # Sweep config: list values are expanded into a grid (Cartesian product).
 # Run with: sfb sweep -c configs/run_sweep.yaml
 #
+# Dials: sequence_length, vocabulary_size, target_noise (label noise during training)
 # model: simple_nn | gru
 # model_params: d_model, n_layers (for gru)
 # This example runs 2 tasks x 3 seq lengths x 2 vocab sizes = 12 experiments.
+# Add target_noise: [0.0, 0.1, 0.2] to sweep over label noise.
 
 task: [sorting, copy]
-sequence_length: [32, 64, 128]
-vocabulary_size: [32, 64]
+sequence_length: [32, 64, 128, 256, 512, 1024]
+vocabulary_size: [32, 64, 128, 256, 512, 1024]
+target_noise: [0.0, 0.1, 0.2]
 model: simple_nn
 model_params:
   d_model: 64
 batch_size: 256
-steps: 100
+steps: 2000
 eval_every: 1000
 seed: 42
