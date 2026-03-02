@@ -210,6 +210,10 @@ __marimo__/
 # Data (ignore all files/folders within data/, but keep the data/ directory itself)
 data/*
 !data/.gitkeep
+!data/figures/
+!data/results/
+!data/traces/
+
 agent.md
 
 notebooks/*

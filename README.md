@@ -51,11 +51,19 @@ uv venv .venv --python 3.14
 uv sync
 ```
 
+For **running tests** (pytest, build):
+
+```bash
+uv sync --extra dev
+```
+
+Then run `uv run pytest` or `pytest`.
+
 For **CUDA** (new GPU hardware, e.g. RTX 50 series):
 
 ```bash
 uv sync
-uv pip uninstall torch -y
+uv pip uninstall torch
 uv pip install torch --index-url https://download.pytorch.org/whl/cu128
 ```
 
@@ -70,20 +78,6 @@ This automatically:
 - Creates/updates `uv.lock`
 - Installs the project in *editable* mode  
   (_No need to run `pip install -e .`_)
-
-#### (Optional) Install developer extras
-
-```bash
-uv sync --extra dev
-```
-
-#### (Optional) Parquet support for compact results
-
-```bash
-uv sync --extra parquet
-```
-
-Then use `-o data/results.parquet` to save as Parquet; default is CSV.
 
 ---
 
@@ -109,36 +103,38 @@ sfb version
 
 **Run a benchmark:**
 
-All experiment summaries go to `data/results.*` by default (same as sweep).
+**Data layout** (folders under `data/`, relative to project root):
+- `data/results/` — results table (`results.csv`), one row per experiment; `sfb run` and `sfb sweep` append here by default
+- `data/traces/` — step-level history from `sfb run --trace` for learning curve plots
+- `data/figures/` — saved plots; `sfb report --save name.png` writes to `data/figures/name.png` by default
 
 ```bash
-# Sorting task — summary appended to data/results.*
+# Sorting task — summary appended to data/results/results.csv
 sfb run --task sorting --seq-len 32 --vocab-size 64 --steps 5000
 
-# Reverse task with GRU (sequence-oriented)
+# Save step history for learning curves
+sfb run -t sorting --trace
+
+# Reverse task with GRU
 sfb run -t reverse -m gru --seq-len 32 --steps 5000
 
-# Copy task with custom batch size and eval interval
+# Copy task
 sfb run -t copy -b 128 --eval-every 200
 
-# Use a YAML config file
+# YAML config
 sfb run -t sorting -c configs/generation_default.yaml --steps 2000
 ```
 
-**Optional:** Use `-o path` only when you need the step-level learning curve for one run (e.g. for plotting). The summary still goes to `data/results.*`.
-
-**Run a parameter sweep (many experiments from one config):**
+**Sweep and report:**
 
 ```bash
-# Sweep over task and sequence_length (lists in YAML → Cartesian product)
 sfb sweep -c configs/run_sweep.yaml
+
+# Visualize (metrics grid, learning curve)
+sfb report
+sfb report --save metrics.png                    # saves to data/figures/metrics.png
+sfb report curve data/traces/sorting_simple_nn_*.csv --save curve.png   # plot trace, save to data/figures/
 ```
-
-Use list values in the YAML to sweep; scalars are fixed. Results are saved to `data/results.csv` by default.
-
-**Results layout:**
-- `data/results.csv` — single file with one row per experiment (config + final metrics). Both `sfb run` and `sfb sweep` append here by default.
-- `-o path` (optional) — saves step-level history for one run (train_loss, train_acc per eval step) for plotting learning curves. Use only when needed.
 
 ---
 
@@ -155,8 +151,9 @@ Use list values in the YAML to sweep; scalars are fixed. Results are saved to `d
 | `--steps`      | `-n`  | Training steps                    |
 | `--batch-size` | `-b`  | Batch size                        |
 | `--eval-every` |       | Evaluation interval (steps)       |
-| `--output`     | `-o`  | Save step-level learning curve to path (optional, for plotting) |
-| `--no-append-summary` | | Skip appending summary to data/results.* |
+| `--output`     | `-o`  | Save step history to path (optional) |
+| `--trace`      |       | Save step history to data/traces/ |
+| `--no-append-summary` | | Skip appending to data/results/results.csv |
 | `--config`     | `-c`  | YAML config path                  |
 | `--device`     |       | auto, cpu, or cuda                |
 | `--seed`       |       | Random seed                       |
@@ -166,7 +163,7 @@ Use list values in the YAML to sweep; scalars are fixed. Results are saved to `d
 | Option     | Short | Description                                    |
 | ---------- |-------|------------------------------------------------|
 | `--config` | `-c`  | Sweep YAML (list values = grid dimensions)     |
-| `--output` | `-o`  | Results path (default: data/results.csv) |
+| `--output` | `-o`  | Results path (default: data/results/results.csv) |
 | `--overwrite` |     | Replace results file instead of appending |
 | `--device` |       | auto, cpu, or cuda                             |
 

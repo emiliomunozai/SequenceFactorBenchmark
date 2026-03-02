@@ -1,10 +1,11 @@
 """
-CLI for SeqFactorBench. Invoke as: sfb run ... | sfb sweep ... | sfb list ...
+CLI for SeqFactorBench. Invoke as: sfb run ... | sfb sweep ... | sfb report ...
 """
 import argparse
 import csv
 import itertools
 import sys
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from importlib.metadata import version, PackageNotFoundError
@@ -19,6 +20,8 @@ from seqfacben.results import (
     overwrite_results,
     load_existing_rows,
     get_next_run_id,
+    traces_dir,
+    figures_dir,
 )
 from seqfacben.registry import (
     get_model,
@@ -279,8 +282,14 @@ def cmd_run(args):
 
     history = manager.train(n_steps=steps, batch_size=batch_size, eval_every=eval_every)
 
-    # Optional: write step-level history to file
     out_path = getattr(args, "output", None)
+    if getattr(args, "trace", False) and not out_path:
+        trace_dir = traces_dir()
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        task_name = getattr(args, "task", "run")
+        model_name = getattr(args, "model", "model")
+        out_path = trace_dir / f"{task_name}_{model_name}_{ts}.csv"
     if out_path:
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -291,7 +300,7 @@ def cmd_run(args):
             )
             w.writeheader()
             w.writerows(history)
-        print(f"Wrote history to {out_path}")
+        print(f"Wrote trace to {out_path}")
 
     # Append summary to main results (unless --no-append-summary)
     append_summary = not getattr(args, "no_append_summary", False)
@@ -342,15 +351,11 @@ def cmd_sweep(args):
     out_path = Path(args.output) if args.output else default_results_path()
     overwrite = getattr(args, "overwrite", False)
 
-    # Load existing results (unless overwrite)
     existing_rows: list[dict] = []
     explored_signatures: set[tuple] = set()
     if not overwrite and out_path.exists():
-        try:
-            existing_rows, explored_signatures = load_existing_rows(out_path, _config_signature)
-            print(f"Found {len(existing_rows)} existing result(s) in {out_path}")
-        except Exception as e:
-            print(f"Could not load existing results ({e}), starting fresh")
+        existing_rows, explored_signatures = load_existing_rows(out_path, _config_signature)
+        print(f"Found {len(existing_rows)} existing result(s) in {out_path}")
 
     # Filter to configs not yet explored
     to_run = [rc for rc in run_configs if _config_signature(rc) not in explored_signatures]
@@ -435,6 +440,67 @@ def cmd_version(args):
         print("Version unknown (package not installed)")
 
 
+def _resolve_save_path(save: str | None) -> Path | None:
+    """Resolve --save path: bare filenames go to data/figures/, else use as given."""
+    if not save:
+        return None
+    p = Path(save)
+    if len(p.parts) <= 1 or p.parts[0] == ".":
+        return figures_dir() / (p.name or save)
+    return p
+
+
+def cmd_report(args):
+    """Report and visualize results."""
+    from seqfacben.analysis import load_results, filter_results, plot_metrics_grid, plot_learning_curve
+
+    sub = getattr(args, "report_subcommand", "metrics")
+    save_path = _resolve_save_path(args.save)
+
+    if sub == "curve":
+        path = getattr(args, "trace_path", None)
+        if not path:
+            raise SystemExit("Usage: sfb report curve <path_to_trace.csv>")
+        path = Path(path)
+        if not path.exists():
+            raise SystemExit(f"Trace file not found: {path}")
+        fig = plot_learning_curve(path, save=save_path)
+        if fig and not save_path:
+            import matplotlib.pyplot as plt
+            plt.show()
+        elif save_path:
+            print(f"Saved learning curve plot to {save_path}")
+    else:
+        # metrics grid
+        df = load_results(args.results)
+        if df.empty:
+            print("No results found. Run experiments first.")
+            return
+        df = filter_results(
+            df,
+            task=args.task or None,
+            model=args.model or None,
+            seq_len=args.seq_len or None,
+            vocab_size=args.vocab_size or None,
+        )
+        if df.empty:
+            print("No results match the filters.")
+            return
+        fig = plot_metrics_grid(
+            df,
+            x=args.x,
+            y=args.y,
+            metric=args.metric,
+            facet_by=args.facet_by if args.facet_by else None,
+            save=save_path,
+        )
+        if fig and not save_path:
+            import matplotlib.pyplot as plt
+            plt.show()
+        elif save_path:
+            print(f"Saved metrics grid to {save_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="sfb",
@@ -454,7 +520,8 @@ def main():
     run_p.add_argument("-b", "--batch-size", type=int, default=None, help="Batch size")
     run_p.add_argument("--eval-every", type=int, default=1000, help="Eval every N steps")
     run_p.add_argument("-o", "--output", default=None, help="Path for step-level history (optional)")
-    run_p.add_argument("--no-append-summary", action="store_true", help="Do not append summary to data/results.*")
+    run_p.add_argument("--trace", action="store_true", help="Save step history to data/traces/")
+    run_p.add_argument("--no-append-summary", action="store_true", help="Do not append to data/results/results.csv")
     run_p.add_argument("-c", "--config", default=None, help="YAML config path (overrides with CLI)")
     run_p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"], help="Device")
     run_p.add_argument("--seed", type=int, default=None, help="Random seed")
@@ -473,11 +540,32 @@ def main():
     sweep_p.add_argument(
         "-o", "--output",
         default=None,
-        help="Results path (default: data/results.parquet or .csv)",
+        help="Results path (default: data/results/results.csv)",
     )
     sweep_p.add_argument("--overwrite", action="store_true", help="Replace results file instead of appending")
     sweep_p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"], help="Device")
     sweep_p.set_defaults(func=cmd_sweep)
+
+    # report: visualize results
+    report_p = subparsers.add_parser("report", help="Visualize results and learning curves")
+    report_sub = report_p.add_subparsers(dest="report_subcommand", required=False)
+    # metrics (default): sfb report [filters] [--save]
+    report_p.add_argument("-r", "--results", default=None, help="Results path (default: data/results/results.csv)")
+    report_p.add_argument("--task", type=str, default=None, help="Filter by task")
+    report_p.add_argument("--model", type=str, default=None, help="Filter by model (base name)")
+    report_p.add_argument("--seq-len", type=int, default=None, help="Filter by seq_len")
+    report_p.add_argument("--vocab-size", type=int, default=None, help="Filter by vocab_size")
+    report_p.add_argument("--x", default="seq_len", help="Column for x axis (default: seq_len)")
+    report_p.add_argument("--y", default="task", help="Column for y axis (default: task)")
+    report_p.add_argument("--metric", default="final_val_acc", help="Metric to show (default: final_val_acc)")
+    report_p.add_argument("--facet-by", default="model", help="Subplot by column (default: model)")
+    report_p.add_argument("--save", default=None, help="Save figure to path (bare filename -> data/figures/)")
+    report_p.set_defaults(func=cmd_report, report_subcommand="metrics")
+    # curve: sfb report curve <path>
+    curve_p = report_sub.add_parser("curve", help="Plot learning curve from trace file")
+    curve_p.add_argument("trace_path", help="Path to trace CSV (from sfb run --trace or -o)")
+    curve_p.add_argument("--save", default=None, help="Save figure to path (bare filename -> data/figures/)")
+    curve_p.set_defaults(func=cmd_report, report_subcommand="curve")
 
     # list
     list_p = subparsers.add_parser("list", help="List tasks, models, or default config")

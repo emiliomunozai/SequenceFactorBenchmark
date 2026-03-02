@@ -1,22 +1,15 @@
 **Pending**
-1. Append results or search/cache/data for older results -> notificacion
-2. Unit test -> Reproducibilidad de resultados
-3. ConfigSpace
-4. Model Section
- - Model name column o custom models by name
- - Model parameters, dict by model
-5. Paquete de analysis de resultados y visualizaciones
- - Curvas de aprendizajes
- - Matrices
-6. Dinamicas modelo/tasks
- - Dos arquitecturas
-7. Ajustar plan de tiempo (Primera versión articulo 6 semanas / Deadline mayo)
-8. Benchmark tracks NIPS
-9. 
-
-
-
-
-
-
-
+1. [Done] Append results or search/cache/data for older results
+2. [Done] Unit test -> Reproducibilidad de resultados
+3. [Pending] ConfigSpace
+4. [Done] Model Section
+    - Model name column o custom models by name
+    - Model parameters, dict by model
+5. [Done] Paquete de analysis de resultados y visualizaciones
+    - Curvas de aprendizajes
+    - Matrices
+6. [Done] Dinamicas modelo/tasks
+    - Dos arquitecturas
+7. [Pending] Ajustar plan de tiempo (Primera versión articulo 6 semanas / Deadline mayo)
+8. [Pending] Benchmark tracks NIPS (Solve in a .md)
+9. [Pending] Add noise and refactor dials.

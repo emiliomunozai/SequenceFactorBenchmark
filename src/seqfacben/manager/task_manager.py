@@ -49,6 +49,34 @@ class TaskManager:
                     f"Step {step + 1}: train_loss={train_loss:.4f}, train_acc={train_acc:.4f}, "
                     f"val_loss={val_loss:.4f}, val_acc={val_acc:.4f}"
                 )
+
+        # Always evaluate at final step if we never hit eval_every (e.g. steps < eval_every)
+        if self.history and self.history[-1]["step"] != n_steps:
+            val_loss, val_acc = self.eval_step(batch_size)
+            self.history.append({
+                "step": n_steps,
+                "train_loss": train_loss,
+                "train_acc": train_acc,
+                "val_loss": val_loss,
+                "val_acc": val_acc,
+            })
+            print(
+                f"Step {n_steps}: train_loss={train_loss:.4f}, train_acc={train_acc:.4f}, "
+                f"val_loss={val_loss:.4f}, val_acc={val_acc:.4f}"
+            )
+        elif not self.history:
+            val_loss, val_acc = self.eval_step(batch_size)
+            self.history.append({
+                "step": n_steps,
+                "train_loss": train_loss,
+                "train_acc": train_acc,
+                "val_loss": val_loss,
+                "val_acc": val_acc,
+            })
+            print(
+                f"Step {n_steps}: train_loss={train_loss:.4f}, train_acc={train_acc:.4f}, "
+                f"val_loss={val_loss:.4f}, val_acc={val_acc:.4f}"
+            )
         return self.history
 
     def show_examples(self, n_examples=5):
