@@ -21,6 +21,7 @@ from seqfacben.results import (
     get_next_run_id,
     traces_dir,
     figures_dir,
+    checkpoints_dir,
 )
 from seqfacben.registry import (
     get_model,
@@ -31,9 +32,12 @@ from seqfacben.registry import (
     param_defaults_from_models,
 )
 from seqfacben.manager.task_manager import TaskManager
-from seqfacben.losses import cross_entropy
+from seqfacben.losses import cross_entropy, shift_tolerant_ce
 
-LOSSES = {"cross_entropy": cross_entropy}
+LOSSES = {
+    "cross_entropy": cross_entropy,
+    "shift_ce": shift_tolerant_ce,
+}
 
 
 def _load_config(path: str) -> dict:
@@ -191,6 +195,18 @@ def _build_task_and_model(args, config: dict):
     return task, model
 
 
+def _save_checkpoint(model, run_config: dict, run_id: int) -> Path:
+    """Save model weights + config to data/checkpoints/<task>_<model>_<run_id>.pt"""
+    ckpt_dir = checkpoints_dir()
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    task_name = run_config.get("task", "task")
+    model_name = _base_model_name(run_config.get("model", "model"))
+    filename = f"{task_name}_{model_name}_{run_id}.pt"
+    path = ckpt_dir / filename
+    torch.save({"model_state_dict": model.state_dict(), "run_config": run_config}, path)
+    return path
+
+
 def _run_config_from_args(args, config: dict) -> dict:
     """Build run_config dict from args + config (for single run summary row)."""
     return {
@@ -227,7 +243,7 @@ def _args_from_run_config(run_config: dict):
     )
 
 
-def _run_one_experiment(run_config: dict, device: torch.device, run_id: int) -> dict:
+def _run_one_experiment(run_config: dict, device: torch.device, run_id: int, save_model: bool = False) -> dict:
     """Run a single experiment from a run config; return one summary row (params + metrics)."""
     if run_config.get("seed") is not None:
         torch.manual_seed(run_config["seed"])
@@ -268,6 +284,9 @@ def _run_one_experiment(run_config: dict, device: torch.device, run_id: int) -> 
         "final_val_loss": final_val_loss,
         "final_val_acc": final_val_acc,
     }
+    if save_model:
+        ckpt_path = _save_checkpoint(model, run_config, run_id=run_id)
+        print(f"    Saved checkpoint to {ckpt_path}")
     return row
 
 
@@ -312,9 +331,10 @@ def cmd_run(args):
         print(f"Wrote trace to {out_path}")
 
     # Append summary to main results (unless --no-append-summary)
+    run_config = _run_config_from_args(args, config)
     append_summary = not getattr(args, "no_append_summary", False)
+    run_id = get_next_run_id()
     if append_summary:
-        run_config = _run_config_from_args(args, config)
         if history:
             last = history[-1]
             final_train_loss = last["train_loss"]
@@ -324,7 +344,7 @@ def cmd_run(args):
         else:
             final_train_loss = final_train_acc = final_val_loss = final_val_acc = None
         row = {
-            "run_id": get_next_run_id(),
+            "run_id": run_id,
             "model": _format_model_column(run_config),
             "task": run_config["task"],
             "loss": run_config["loss"],
@@ -344,6 +364,10 @@ def cmd_run(args):
         }
         results_path = append_results([row])
         print(f"Appended summary to {results_path}")
+
+    if getattr(args, "save_model", False):
+        ckpt_path = _save_checkpoint(model, run_config, run_id=run_id)
+        print(f"Saved model checkpoint to {ckpt_path}")
 
     show_n = getattr(args, "show_examples", None)
     if show_n is not None:
@@ -386,7 +410,7 @@ def cmd_sweep(args):
     base_run_id = 0 if overwrite else len(existing_rows)
     for i, run_config in enumerate(to_run):
         print(f"  [{i + 1}/{n}] model={run_config.get('model', 'simple_nn')} task={run_config['task']} seq_len={run_config['sequence_length']}")
-        row = _run_one_experiment(run_config, device, run_id=base_run_id + i)
+        row = _run_one_experiment(run_config, device, run_id=base_run_id + i, save_model=getattr(args, "save_model", False))
         if overwrite and i == 0:
             overwrite_results([row], out_path)
         else:
@@ -405,7 +429,8 @@ def cmd_list(args):
         return
     if args.losses:
         print("Losses:")
-        print("  cross_entropy – flattened CE over sequence")
+        print("  cross_entropy – standard CE (exact position match)")
+        print("  shift_ce      – shift-tolerant CE (soft neighbour blending)")
         return
     if args.models:
         print("Models:")
@@ -550,6 +575,58 @@ def cmd_report(args):
             print(f"Saved metrics grid to {save_path}")
 
 
+def cmd_predict(args):
+    """Load a saved checkpoint and show example predictions."""
+    ckpt_path = Path(args.checkpoint)
+    if not ckpt_path.exists():
+        raise SystemExit(f"Checkpoint not found: {ckpt_path}")
+
+    device = _get_device(args.device)
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    run_config = ckpt["run_config"]
+
+    model_name = _base_model_name(run_config.get("model", "simple_nn"))
+    task_name = run_config.get("task", "sorting")
+    seq_len = run_config.get("sequence_length", 32)
+    vocab_size = run_config.get("vocabulary_size", 64)
+    loss_name = run_config.get("loss", "cross_entropy")
+
+    model_info = get_model(model_name)
+    if model_info is None:
+        raise SystemExit(f"Unknown model in checkpoint: {model_name}")
+
+    param_names = model_info["constructor_params"]
+    defaults = model_info.get("param_defaults", {})
+    model_kwargs = {
+        "vocab_size": vocab_size,
+        "seq_len": seq_len,
+        **{k: run_config.get(k, defaults.get(k)) for k in param_names if k not in ("vocab_size", "seq_len")},
+    }
+    model = model_info["cls"](**model_kwargs)
+    model.load_state_dict(ckpt["model_state_dict"])
+    model = model.to(device)
+
+    loss_fn = LOSSES.get(loss_name, LOSSES["cross_entropy"])
+    generator = RandomSequenceGenerator(seq_len=seq_len, vocab_size=vocab_size)
+    task_info = get_task(task_name)
+    if task_info is None:
+        raise SystemExit(f"Unknown task in checkpoint: {task_name}")
+    task = task_info["cls"](generator, loss_fn=loss_fn)
+
+    manager = TaskManager(task=task, model=model, optimizer=None, device=device)
+
+    print(f"Checkpoint : {ckpt_path}")
+    print(f"Model      : {run_config.get('model', model_name)}")
+    print(f"Task       : {task_name}")
+    print(f"Seq len    : {seq_len}")
+    print(f"Vocab size : {vocab_size}")
+
+    n = args.n_examples
+    val_loss, val_acc = manager.eval_step(batch_size=n)
+    print(f"\nEval ({n} samples): loss={val_loss:.4f}  acc={val_acc:.4f}")
+    manager.show_examples(n_examples=n)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="sfb",
@@ -584,6 +661,7 @@ def main():
         metavar="N",
         help="Show N example predictions at end (default: 5)",
     )
+    run_p.add_argument("--save-model", action="store_true", help="Save model checkpoint to data/checkpoints/")
     run_p.set_defaults(func=cmd_run)
 
     # sweep: one config file, list values = parameter grid (Cartesian product)
@@ -602,6 +680,7 @@ def main():
         help="Results path (default: data/results/results.csv)",
     )
     sweep_p.add_argument("--overwrite", action="store_true", help="Replace results file instead of appending")
+    sweep_p.add_argument("--save-model", action="store_true", help="Save each model checkpoint to data/checkpoints/")
     sweep_p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"], help="Device")
     sweep_p.set_defaults(func=cmd_sweep)
 
@@ -644,6 +723,13 @@ def main():
     vocab_p.add_argument("--facet-by", default="task", help="Subplot by column (default: task)")
     vocab_p.add_argument("--save", default=None, help="Save figure to path (bare filename -> data/figures/)")
     vocab_p.set_defaults(func=cmd_report, report_subcommand="vocab")
+
+    # predict: load checkpoint and show examples
+    pred_p = subparsers.add_parser("predict", help="Load a saved checkpoint and show example predictions")
+    pred_p.add_argument("checkpoint", help="Path to .pt checkpoint (e.g. data/checkpoints/copy_gru_0.pt)")
+    pred_p.add_argument("-n", "--n-examples", type=int, default=5, help="Number of examples to show (default: 5)")
+    pred_p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"], help="Device")
+    pred_p.set_defaults(func=cmd_predict)
 
     # list
     list_p = subparsers.add_parser("list", help="List tasks, models, or default config")

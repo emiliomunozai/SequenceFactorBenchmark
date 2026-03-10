@@ -18,13 +18,15 @@ def _project_root() -> Path:
 
 
 # data/
-#   results/   – results table (appending summary rows)
-#   traces/    – step-level history (sfb run --trace)
-#   figures/   – saved plots from sfb report --save
+#   results/      – results table (appending summary rows)
+#   traces/       – step-level history (sfb run --trace)
+#   figures/      – saved plots from sfb report --save
+#   checkpoints/  – saved model weights (sfb run/sweep --save-model)
 DATA_DIR = _project_root() / "data"
 RESULTS_DIR = DATA_DIR / "results"
 TRACES_DIR = DATA_DIR / "traces"
 FIGURES_DIR = DATA_DIR / "figures"
+CHECKPOINTS_DIR = DATA_DIR / "checkpoints"
 
 RESULTS_CSV = RESULTS_DIR / "results.csv"
 _LEGACY_RESULTS = DATA_DIR / "results.csv"
@@ -46,6 +48,11 @@ def traces_dir() -> Path:
 def figures_dir() -> Path:
     """Directory for saved analysis plots."""
     return FIGURES_DIR
+
+
+def checkpoints_dir() -> Path:
+    """Directory for saved model checkpoints."""
+    return CHECKPOINTS_DIR
 
 
 def _read_csv(path: Path) -> list[dict]:

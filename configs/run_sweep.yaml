@@ -2,19 +2,59 @@
 # Run with: sfb sweep -c configs/run_sweep.yaml
 #
 # Dials: sequence_length, vocabulary_size, target_noise (label noise during training)
-# model: simple_nn | gru
-# model_params: d_model, n_layers (for gru)
-# This example runs 2 tasks x 3 seq lengths x 2 vocab sizes = 12 experiments.
+# model: simple_nn | gru | lstm | bigru | s4d | autoencoder
+# model_params: varies per model (see examples below)
+# This example runs 1 task x 6 seq lengths x 6 vocab sizes = 36 experiments.
 # Add target_noise: [0.0, 0.1, 0.2] to sweep over label noise.
+#
+# ── Model examples (uncomment one block to use) ──────────────────────
+#
+# simple_nn — flat MLP over the entire sequence
+# model: simple_nn
+# model_params:
+#   d_model: 64
+#
+# gru — unidirectional GRU encoder
+# model: gru
+# model_params:
+#   d_model: 64
+#   n_layers: 1
+#
+# lstm — unidirectional LSTM encoder
+# model: lstm
+# model_params:
+#   d_model: 64
+#   n_layers: 1
+#
+# bigru — bidirectional GRU encoder
+# model: bigru
+# model_params:
+#   d_model: 64
+#   n_layers: 1
+#
+# s4d — Structured State Space (diagonal) encoder
+# model: s4d
+# model_params:
+#   d_model: 64
+#   n_layers: 4
+#
+# autoencoder — symmetric encoder-decoder with bottleneck
+# model: autoencoder
+# model_params:
+#   d_model: 64
+#   n_layers: 2
+#   bottleneck_dim: 16
+#
+# ─────────────────────────────────────────────────────────────────────
 
-task: [sorting]
-sequence_length: [32, 64, 128, 256, 512, 1024, 2048, 4096]
-vocabulary_size: [32, 64, 128, 256, 512, 1024, 2048, 4096]
-target_noise: [0.1]
+task: [copy]
+sequence_length: [128, 256, 512, 1024, 2048, 4096]
+vocabulary_size: [128, 256, 512, 1024, 2048, 4096]
+target_noise: [0]
 model: simple_nn
 model_params:
   d_model: 64
 batch_size: 256
-steps: 50000
+steps: 10000
 eval_every: 1000
 seed: 42
