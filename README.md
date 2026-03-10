@@ -1,5 +1,5 @@
-![Build](https://github.com/emiliomunozai/SequenceFactorBenchmark/actions/workflows/build.yml/badge.svg)
-![Tests](https://github.com/emiliomunozai/SequenceFactorBenchmark/actions/workflows/test.yml/badge.svg)
+![ci](https://github.com/emiliomunozai/SequenceFactorBenchmark/actions/workflows/ci.yml/badge.svg)
+
 # SeqFactorBench
 
 Sequence model benchmark for copy, sorting, and reverse tasks under controlled scale, breadth, structure, and noise.
