@@ -1,5 +1,4 @@
 import torch
-import pandas as pd
 
 
 def _corrupt_targets(y: torch.Tensor, vocab_size: int, noise_rate: float) -> torch.Tensor:

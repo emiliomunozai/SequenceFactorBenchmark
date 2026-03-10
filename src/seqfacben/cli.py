@@ -4,7 +4,6 @@ CLI for SeqFactorBench. Invoke as: sfb run ... | sfb sweep ... | sfb report ...
 import argparse
 import csv
 import itertools
-import sys
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -44,7 +43,6 @@ def _load_config(path: str) -> dict:
 
 
 # Keys that can be swept (list = dimension) or fixed (scalar). Used by sweep command.
-# model_params.* are flattened into the config (e.g. model_params.d_model -> d_model).
 SWEEP_PARAM_KEYS = [
     "model", "task", "loss", "sequence_length", "vocabulary_size", "target_noise",
     *sorted(all_model_param_keys()),
@@ -162,7 +160,6 @@ def _build_task_and_model(args, config: dict):
     """Resolve seq_len, vocab_size, model from args + config. Build generator, task, model."""
     seq_len = getattr(args, "seq_len", None) or config.get("sequence_length", 32)
     vocab_size = getattr(args, "vocab_size", None) or config.get("vocabulary_size", 64)
-    d_model = getattr(args, "d_model", None) or config.get("d_model", 64)
     model_name = (getattr(args, "model", None) or config.get("model", "simple_nn")).lower()
 
     loss_name = (getattr(args, "loss", None) or config.get("loss", "cross_entropy")).lower()

@@ -7,7 +7,6 @@ from seqfacben.cli import (
     _run_one_experiment,
     _config_signature,
     _expand_sweep_config,
-    _flatten_model_params,
     _format_model_column,
 )
 

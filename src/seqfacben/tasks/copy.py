@@ -1,4 +1,3 @@
-import torch
 from seqfacben.tasks.base import BaseTask
 from seqfacben.registry import register_task
 
