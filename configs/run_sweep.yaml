@@ -7,14 +7,14 @@
 # This example runs 2 tasks x 3 seq lengths x 2 vocab sizes = 12 experiments.
 # Add target_noise: [0.0, 0.1, 0.2] to sweep over label noise.
 
-task: [sorting, copy]
-sequence_length: [32, 64, 128, 256, 512, 1024]
-vocabulary_size: [32, 64, 128, 256, 512, 1024]
-target_noise: [0.0, 0.1, 0.2]
+task: [sorting]
+sequence_length: [32, 64, 128, 256, 512, 1024, 2048, 4096]
+vocabulary_size: [32, 64, 128, 256, 512, 1024, 2048, 4096]
+target_noise: [0.1]
 model: simple_nn
 model_params:
   d_model: 64
 batch_size: 256
-steps: 2000
+steps: 50000
 eval_every: 1000
 seed: 42

@@ -348,6 +348,10 @@ def cmd_run(args):
         results_path = append_results([row])
         print(f"Appended summary to {results_path}")
 
+    show_n = getattr(args, "show_examples", None)
+    if show_n is not None:
+        manager.show_examples(n_examples=show_n if isinstance(show_n, int) else 5)
+
 
 def cmd_sweep(args):
     """Run many experiments from one sweep config (list values = grid)."""
@@ -574,6 +578,15 @@ def main():
     run_p.add_argument("-c", "--config", default=None, help="YAML config path (overrides with CLI)")
     run_p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"], help="Device")
     run_p.add_argument("--seed", type=int, default=None, help="Random seed")
+    run_p.add_argument(
+        "--show-examples",
+        nargs="?",
+        const=5,
+        type=int,
+        default=None,
+        metavar="N",
+        help="Show N example predictions at end (default: 5)",
+    )
     run_p.set_defaults(func=cmd_run)
 
     # sweep: one config file, list values = parameter grid (Cartesian product)

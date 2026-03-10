@@ -13,3 +13,7 @@
 7. [Pending] Ajustar plan de tiempo (Primera versión articulo 6 semanas / Deadline mayo)
 8. [Pending] Benchmark tracks NIPS (Solve in a .md)
 9. [Pending] Add noise and refactor dials.
+10. [Pending] Resultados parciales para la justificacion.
+11. [Pending] Loss functions resiliente a la permutacion, preguntar a chatgpt, podria ser CR con teacher forcing.
+12. [Pending] JEPA reference and idea
+     

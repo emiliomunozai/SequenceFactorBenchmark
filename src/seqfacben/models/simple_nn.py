@@ -1,10 +1,9 @@
 from torch import nn
-from seqfacben.models.base import BaseModel
 from seqfacben.registry import register_model
 
 
 @register_model("simple_nn", display_params=["d_model"], param_defaults={"d_model": 64})
-class SimpleNN(BaseModel):
+class SimpleNN(nn.Module):
     def __init__(self, vocab_size: int, seq_len: int, d_model: int):
         super().__init__()
         self.seq_len = seq_len
@@ -28,7 +27,3 @@ class SimpleNN(BaseModel):
         x = self.net(x)  # [batch, vocab_size * seq_len]
         x = x.view(batch_size, self.seq_len, self.vocab_size)  # [batch, seq_len, vocab_size]
         return x
-
-    def reset_state(self):
-        """Stateless model: no-op."""
-        pass

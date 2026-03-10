@@ -24,8 +24,7 @@ def _load_models():
         return
     import seqfacben.models as models_pkg
     for importer, modname, _ in pkgutil.iter_modules(models_pkg.__path__, prefix="seqfacben.models."):
-        if "base" not in modname:  # skip base.py
-            importlib.import_module(modname)
+        importlib.import_module(modname)
     _models_loaded = True
 
 

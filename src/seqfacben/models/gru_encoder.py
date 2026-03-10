@@ -3,7 +3,6 @@ GRU encoder: processes the sequence step-by-step with a Gated Recurrent Unit.
 Well-suited for sequence-oriented tasks like reverse.
 """
 from torch import nn
-from seqfacben.models.base import BaseModel
 from seqfacben.registry import register_model
 
 
@@ -13,7 +12,7 @@ from seqfacben.registry import register_model
     constructor_params=["vocab_size", "seq_len", "d_model", "n_layers"],
     param_defaults={"n_layers": 1},
 )
-class GRUEncoder(BaseModel):
+class GRUEncoder(nn.Module):
     """GRU encoder that reads the sequence left-to-right and outputs logits per position."""
 
     def __init__(self, vocab_size: int, seq_len: int, d_model: int, n_layers: int = 1):
@@ -33,7 +32,3 @@ class GRUEncoder(BaseModel):
         out, _ = self.gru(x)  # out: [batch, seq_len, d_model]
         logits = self.head(out)  # [batch, seq_len, vocab_size]
         return logits
-
-    def reset_state(self):
-        """Stateless per forward (hidden is not carried across batches)."""
-        pass

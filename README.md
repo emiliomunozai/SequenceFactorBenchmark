@@ -1,6 +1,5 @@
+![Build](https://github.com/emiliomunozai/SequenceFactorBenchmark/actions/workflows/build.yml/badge.svg)
 ![Tests](https://github.com/emiliomunozai/SequenceFactorBenchmark/actions/workflows/test.yml/badge.svg)
-![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)
-
 # SeqFactorBench
 
 Sequence model benchmark for copy, sorting, and reverse tasks under controlled scale, breadth, structure, and noise.
@@ -164,6 +163,7 @@ sfb report vocab --save vocab_sensitivity.png      # line plot: metric vs vocab_
 | `--config`     | `-c`  | YAML config path                  |
 | `--device`     |       | auto, cpu, or cuda                |
 | `--seed`       |       | Random seed                       |
+| `--show-examples` |   | Show N example predictions at end (e.g. `--show-examples` or `--show-examples 3`) |
 
 #### Analyzing the three dials (seq_len, vocab_size, target_noise)
 
