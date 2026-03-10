@@ -2,7 +2,7 @@
 # Run with: sfb sweep -c configs/run_sweep.yaml
 #
 # Dials: sequence_length, vocabulary_size, target_noise (label noise during training)
-# model: simple_nn | gru | lstm | bigru | s4d | autoencoder
+# model: simple_nn | gru | lstm | bigru | s4d | transformer | autoencoder
 # model_params: varies per model (see examples below)
 # This example runs 1 task x 6 seq lengths x 6 vocab sizes = 36 experiments.
 # Add target_noise: [0.0, 0.1, 0.2] to sweep over label noise.
@@ -37,6 +37,13 @@
 # model_params:
 #   d_model: 64
 #   n_layers: 4
+#
+# transformer — vanilla Transformer encoder (multi-head self-attention)
+# model: transformer
+# model_params:
+#   d_model: 64
+#   n_layers: 4
+#   n_heads: 4
 #
 # autoencoder — symmetric encoder-decoder with bottleneck
 # model: autoencoder
