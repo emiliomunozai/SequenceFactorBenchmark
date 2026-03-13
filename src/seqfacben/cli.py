@@ -4,6 +4,7 @@ CLI for SeqFactorBench. Invoke as: sfb run ... | sfb sweep ... | sfb report ...
 import argparse
 import csv
 import itertools
+import time
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -207,6 +208,11 @@ def _save_checkpoint(model, run_config: dict, run_id: int) -> Path:
     return path
 
 
+def _count_params(model) -> int:
+    """Total number of trainable parameters."""
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
 def _run_config_from_args(args, config: dict) -> dict:
     """Build run_config dict from args + config (for single run summary row)."""
     return {
@@ -250,13 +256,16 @@ def _run_one_experiment(run_config: dict, device: torch.device, run_id: int, sav
     args = _args_from_run_config(run_config)
     task, model = _build_task_and_model(args, run_config)
     model = model.to(device)
+    param_count = _count_params(model)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     target_noise = float(run_config.get("target_noise", 0.0))
     manager = TaskManager(task=task, model=model, optimizer=optimizer, device=device, target_noise=target_noise)
     steps = int(run_config.get("steps", SWEEP_DEFAULTS["steps"]))
     batch_size = int(run_config.get("batch_size", SWEEP_DEFAULTS["batch_size"]))
     eval_every = int(run_config.get("eval_every", SWEEP_DEFAULTS["eval_every"]))
+    t0 = time.perf_counter()
     history = manager.train(n_steps=steps, batch_size=batch_size, eval_every=eval_every)
+    train_time_s = round(time.perf_counter() - t0, 2)
     if not history:
         final_train_loss = final_train_acc = final_val_loss = final_val_acc = None
     else:
@@ -275,10 +284,12 @@ def _run_one_experiment(run_config: dict, device: torch.device, run_id: int, sav
         "target_noise": run_config.get("target_noise", 0.0),
         "d_model": run_config["d_model"],
         "n_layers": run_config.get("n_layers", 1),
+        "param_count": param_count,
         "batch_size": run_config["batch_size"],
         "steps": run_config["steps"],
         "eval_every": run_config["eval_every"],
         "seed": run_config.get("seed"),
+        "train_time_s": train_time_s,
         "final_train_loss": final_train_loss,
         "final_train_acc": final_train_acc,
         "final_val_loss": final_val_loss,
@@ -300,6 +311,7 @@ def cmd_run(args):
     task, model = _build_task_and_model(args, config)
     device = _get_device(getattr(args, "device", "auto"))
     model = model.to(device)
+    param_count = _count_params(model)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     target_noise = getattr(args, "target_noise", None) or config.get("target_noise", 0.0)
@@ -308,7 +320,9 @@ def cmd_run(args):
     batch_size = getattr(args, "batch_size", None) or config.get("batch_size", 64)
     eval_every = getattr(args, "eval_every", 1000)
 
+    t0 = time.perf_counter()
     history = manager.train(n_steps=steps, batch_size=batch_size, eval_every=eval_every)
+    train_time_s = round(time.perf_counter() - t0, 2)
 
     out_path = getattr(args, "output", None)
     if getattr(args, "trace", False) and not out_path:
@@ -353,10 +367,12 @@ def cmd_run(args):
             "target_noise": run_config.get("target_noise", 0.0),
             "d_model": run_config["d_model"],
             "n_layers": run_config.get("n_layers", 1),
+            "param_count": param_count,
             "batch_size": run_config["batch_size"],
             "steps": run_config["steps"],
             "eval_every": run_config["eval_every"],
             "seed": run_config.get("seed"),
+            "train_time_s": train_time_s,
             "final_train_loss": final_train_loss,
             "final_train_acc": final_train_acc,
             "final_val_loss": final_val_loss,
