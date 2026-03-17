@@ -3,6 +3,7 @@ CLI for SeqFactorBench. Invoke as: sfb run ... | sfb sweep ... | sfb report ...
 """
 import argparse
 import csv
+import gc
 import itertools
 import time
 from datetime import datetime
@@ -37,7 +38,7 @@ from sfb.losses import cross_entropy, shift_tolerant_ce
 
 LOSSES = {
     "cross_entropy": cross_entropy,
-    "shift_ce": shift_tolerant_ce,
+    "shift_tolerant_ce": shift_tolerant_ce,
 }
 
 
@@ -96,6 +97,21 @@ def _expand_sweep_config(config: dict) -> list[dict]:
         {**fixed, **dict(zip(keys, combo))}
         for combo in itertools.product(*(dims[k] for k in keys))
     ]
+
+
+def _expand_sweep_config_with_models(config: dict) -> list[dict]:
+    """If config has top-level 'models' (list), each entry is a per-model config; expand and concatenate. Else same as _expand_sweep_config."""
+    models_list = config.get("models")
+    if not isinstance(models_list, list):
+        return _expand_sweep_config(config)
+    shared = {k: v for k, v in config.items() if k != "models"}
+    run_configs = []
+    for entry in models_list:
+        if not isinstance(entry, dict) or "model" not in entry:
+            continue
+        base = {**shared, **_flatten_model_params(entry)}
+        run_configs.extend(_expand_sweep_config(base))
+    return run_configs
 
 
 def _base_model_name(model_val) -> str:
@@ -228,6 +244,7 @@ def _run_config_from_args(args, config: dict) -> dict:
         "steps": getattr(args, "steps", 5000),
         "eval_every": getattr(args, "eval_every", 1000),
         "seed": getattr(args, "seed"),
+        "early_stopping": not getattr(args, "no_early_stop", False),
     }
 
 
@@ -263,17 +280,41 @@ def _run_one_experiment(run_config: dict, device: torch.device, run_id: int, sav
     steps = int(run_config.get("steps", SWEEP_DEFAULTS["steps"]))
     batch_size = int(run_config.get("batch_size", SWEEP_DEFAULTS["batch_size"]))
     eval_every = int(run_config.get("eval_every", SWEEP_DEFAULTS["eval_every"]))
+    early_stopping = run_config.get("early_stopping", True)
+    patience = int(run_config.get("patience", 3))
+    no_hope_threshold = float(run_config.get("no_hope_threshold", 0.01))
+    no_hope_after_evals = int(run_config.get("no_hope_after_evals", 1))
+    no_hope_first_eval_at = run_config.get("no_hope_first_eval_at")
+    if no_hope_first_eval_at is not None:
+        no_hope_first_eval_at = int(no_hope_first_eval_at)
     t0 = time.perf_counter()
-    history = manager.train(n_steps=steps, batch_size=batch_size, eval_every=eval_every)
+    history, early_stopped, stopped_at_step = manager.train(
+        n_steps=steps,
+        batch_size=batch_size,
+        eval_every=eval_every,
+        early_stopping=early_stopping,
+        patience=patience,
+        no_hope_threshold=no_hope_threshold,
+        no_hope_after_evals=no_hope_after_evals,
+        no_hope_first_eval_at=no_hope_first_eval_at if no_hope_first_eval_at is not None else 100,
+    )
     train_time_s = round(time.perf_counter() - t0, 2)
     if not history:
         final_train_loss = final_train_acc = final_val_loss = final_val_acc = None
     else:
-        last = history[-1]
-        final_train_loss = last["train_loss"]
-        final_train_acc = last["train_acc"]
-        final_val_loss = last["val_loss"]
-        final_val_acc = last["val_acc"]
+        # When early stopped, use metrics from the best val_acc step (matches restored checkpoint)
+        if early_stopped:
+            best_entry = max(history, key=lambda h: h["val_acc"])
+            final_train_loss = best_entry["train_loss"]
+            final_train_acc = best_entry["train_acc"]
+            final_val_loss = best_entry["val_loss"]
+            final_val_acc = best_entry["val_acc"]
+        else:
+            last = history[-1]
+            final_train_loss = last["train_loss"]
+            final_train_acc = last["train_acc"]
+            final_val_loss = last["val_loss"]
+            final_val_acc = last["val_acc"]
     row = {
         "run_id": run_id,
         "model": _format_model_column(run_config),
@@ -290,6 +331,8 @@ def _run_one_experiment(run_config: dict, device: torch.device, run_id: int, sav
         "eval_every": run_config["eval_every"],
         "seed": run_config.get("seed"),
         "train_time_s": train_time_s,
+        "early_stop": early_stopped,
+        "stopped_at_step": stopped_at_step,
         "final_train_loss": final_train_loss,
         "final_train_acc": final_train_acc,
         "final_val_loss": final_val_loss,
@@ -298,6 +341,13 @@ def _run_one_experiment(run_config: dict, device: torch.device, run_id: int, sav
     if save_model:
         ckpt_path = _save_checkpoint(model, run_config, run_id=run_id)
         print(f"    Saved checkpoint to {ckpt_path}")
+
+    # Free GPU memory before next run (helps long sweeps avoid OOM)
+    del model, optimizer, task, manager
+    gc.collect()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
     return row
 
 
@@ -320,8 +370,16 @@ def cmd_run(args):
     batch_size = getattr(args, "batch_size", None) or config.get("batch_size", 64)
     eval_every = getattr(args, "eval_every", 1000)
 
+    early_stopping = not getattr(args, "no_early_stop", False)
+    if "early_stopping" in config:
+        early_stopping = config["early_stopping"]
     t0 = time.perf_counter()
-    history = manager.train(n_steps=steps, batch_size=batch_size, eval_every=eval_every)
+    history, early_stopped, stopped_at_step = manager.train(
+        n_steps=steps,
+        batch_size=batch_size,
+        eval_every=eval_every,
+        early_stopping=early_stopping,
+    )
     train_time_s = round(time.perf_counter() - t0, 2)
 
     out_path = getattr(args, "output", None)
@@ -373,6 +431,8 @@ def cmd_run(args):
             "eval_every": run_config["eval_every"],
             "seed": run_config.get("seed"),
             "train_time_s": train_time_s,
+            "early_stop": early_stopped,
+            "stopped_at_step": stopped_at_step,
             "final_train_loss": final_train_loss,
             "final_train_acc": final_train_acc,
             "final_val_loss": final_val_loss,
@@ -391,16 +451,19 @@ def cmd_run(args):
 
 
 def cmd_sweep(args):
-    """Run many experiments from one sweep config (list values = grid)."""
-    config = _load_config(args.config)
-    # Support nested: merge top-level defaults with sweep section (sweep overrides)
-    if "sweep" in config and isinstance(config.get("sweep"), dict):
-        expand_config = {k: v for k, v in config.items() if k != "sweep"}
-        expand_config.update(config["sweep"])
-    else:
-        expand_config = config
+    """Run many experiments from one or more sweep configs (list values = grid)."""
+    # Support one or multiple config files: -c a.yaml -c b.yaml → union of all run configs
+    config_paths = args.config if isinstance(args.config, list) else [args.config]
+    run_configs = []
+    for path in config_paths:
+        config = _load_config(path)
+        if "sweep" in config and isinstance(config.get("sweep"), dict):
+            expand_config = {k: v for k, v in config.items() if k != "sweep"}
+            expand_config.update(config["sweep"])
+        else:
+            expand_config = config
+        run_configs.extend(_expand_sweep_config_with_models(expand_config))
     device = _get_device(args.device)
-    run_configs = _expand_sweep_config(expand_config)
 
     out_path = Path(args.output) if args.output else default_results_path()
     overwrite = getattr(args, "overwrite", False)
@@ -422,10 +485,11 @@ def cmd_sweep(args):
         return
 
     n = len(to_run)
-    print(f"Sweep: {n} new run(s) from {args.config}")
+    config_src = ", ".join(str(p) for p in config_paths)
+    print(f"Sweep: {n} new run(s) from {config_src}")
     base_run_id = 0 if overwrite else len(existing_rows)
     for i, run_config in enumerate(to_run):
-        print(f"  [{i + 1}/{n}] model={run_config.get('model', 'simple_nn')} task={run_config['task']} seq_len={run_config['sequence_length']}")
+        print(f"  [{i + 1}/{n}] model={run_config.get('model', 'simple_nn')} task={run_config['task']} seq_len={run_config['sequence_length']} vocab={run_config.get('vocabulary_size', 64)} target_noise={run_config.get('target_noise', 0.0)}")
         row = _run_one_experiment(run_config, device, run_id=base_run_id + i, save_model=not getattr(args, "no_save_model", False))
         if overwrite and i == 0:
             overwrite_results([row], out_path)
@@ -481,7 +545,7 @@ def cmd_list(args):
     print("Losses:  cross_entropy")
     print()
     print("Usage:   sfb run --task <task> [options]")
-    print("         sfb sweep -c <sweep.yaml> [-o summary.csv]  (one config, many params)")
+    print("         sfb sweep -c <sweep.yaml> [ -c <other.yaml> ... ] [-o summary.csv]")
     print("         sfb list [--tasks | --models | --losses | --config]")
 
 
@@ -665,6 +729,7 @@ def main():
     run_p.add_argument("-o", "--output", default=None, help="Path for step-level history (optional)")
     run_p.add_argument("--trace", action="store_true", help="Save step history to data/traces/")
     run_p.add_argument("--no-append-summary", action="store_true", help="Do not append to data/results/results.csv")
+    run_p.add_argument("--no-early-stop", action="store_true", help="Disable early stopping; always run full steps")
     run_p.add_argument("-c", "--config", default=None, help="YAML config path (overrides with CLI)")
     run_p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"], help="Device")
     run_p.add_argument("--seed", type=int, default=None, help="Random seed")
@@ -688,7 +753,9 @@ def main():
     sweep_p.add_argument(
         "-c", "--config",
         required=True,
-        help="Sweep YAML path (e.g. configs/sweep.yaml). List values = grid dimension.",
+        nargs="+",
+        metavar="YAML",
+        help="One or more sweep YAML paths (e.g. configs/copy_all_models.yaml). List values = grid; multiple files = union of runs.",
     )
     sweep_p.add_argument(
         "-o", "--output",

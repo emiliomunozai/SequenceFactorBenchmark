@@ -1,8 +1,10 @@
 """
-Autoencoder: compresses the embedded sequence through a bottleneck, then
-reconstructs per-position logits.  Tests whether the model can learn a
-compact internal representation sufficient for the target task.
+Autoencoder: compresses the entire sequence through a fixed-size
+bottleneck, then reconstructs per-position logits.  Tests whether the
+model can learn a compact internal representation sufficient for the
+target task.
 """
+import torch
 from torch import nn
 from sfb.registry import register_model
 
@@ -14,7 +16,7 @@ from sfb.registry import register_model
     param_defaults={"n_layers": 2, "bottleneck_dim": 16},
 )
 class Autoencoder(nn.Module):
-    """Symmetric encoder-decoder with a per-position bottleneck."""
+    """Symmetric encoder-decoder with a sequence-level bottleneck."""
 
     def __init__(
         self,
@@ -25,28 +27,46 @@ class Autoencoder(nn.Module):
         bottleneck_dim: int = 16,
     ):
         super().__init__()
+        self.seq_len = seq_len
+        self.bottleneck_dim = bottleneck_dim
+
         self.embed = nn.Embedding(vocab_size, d_model)
 
+        # Encoder: per-position MLP, then flatten + linear to fixed latent
         encoder_layers = []
         in_dim = d_model
-        for i in range(n_layers):
-            out_dim = bottleneck_dim if i == n_layers - 1 else max(in_dim // 2, bottleneck_dim)
+        for i in range(n_layers - 1):
+            out_dim = max(in_dim // 2, bottleneck_dim)
             encoder_layers += [nn.Linear(in_dim, out_dim), nn.GELU()]
             in_dim = out_dim
         self.encoder = nn.Sequential(*encoder_layers)
+        # Compress entire sequence to a single latent vector
+        self.seq_compress = nn.Linear(in_dim * seq_len, bottleneck_dim)
 
+        # Decoder: expand latent back to full sequence, then per-position MLP
+        self.seq_expand = nn.Linear(bottleneck_dim, in_dim * seq_len)
         decoder_layers = []
-        for i in range(n_layers):
-            out_dim = d_model if i == n_layers - 1 else min(in_dim * 2, d_model)
+        for i in range(n_layers - 1):
+            out_dim = min(in_dim * 2, d_model)
             decoder_layers += [nn.Linear(in_dim, out_dim), nn.GELU()]
             in_dim = out_dim
+        # Final projection to d_model (no activation before head)
+        decoder_layers.append(nn.Linear(in_dim, d_model))
         self.decoder = nn.Sequential(*decoder_layers)
 
         self.head = nn.Linear(d_model, vocab_size)
 
     def forward(self, x):
         # x: [batch, seq_len]
-        x = self.embed(x)      # [batch, seq_len, d_model]
-        z = self.encoder(x)     # [batch, seq_len, bottleneck_dim]
-        x = self.decoder(z)     # [batch, seq_len, d_model]
-        return self.head(x)     # [batch, seq_len, vocab_size]
+        B, S = x.shape
+        x = self.embed(x)                        # [B, S, d_model]
+        x = self.encoder(x)                      # [B, S, in_dim]
+
+        # Sequence-level bottleneck
+        z = x.reshape(B, -1)                     # [B, S * in_dim]
+        z = self.seq_compress(z)                 # [B, bottleneck_dim]
+        z = self.seq_expand(z)                   # [B, S * in_dim]
+        z = z.reshape(B, S, -1)                  # [B, S, in_dim]
+
+        x = self.decoder(z)                      # [B, S, d_model]
+        return self.head(x)                      # [B, S, vocab_size]

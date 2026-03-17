@@ -6,207 +6,193 @@ Sequence model benchmark for copy, sorting, and reverse tasks under controlled s
 
 ---
 
-## Setup Instructions
+## Setup
 
-This project requires **Python 3.12+** (see `pyproject.toml`). Dependencies and the virtual environment are managed using [`uv`](https://github.com/astral-sh/uv).
+**Python 3.12+.** Dependencies and venv via `[uv](https://github.com/astral-sh/uv)`.
 
----
+### Install uv
 
-### 1. Using `uv` (Recommended)
+- **Quick (Python already installed):** `py -m pip install --user uv`
+- **Fresh machines (standalone, recommended):**
 
-#### Install `uv`
+  ```powershell
+  powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"
+  ```
 
-`uv` is used to create virtual envs, manage Python versions, manage dependencies, and replace pip/pip-tools/venv/pipx. Installing it via `pip` is slightly circular (using old Python tooling to install the tool that replaces it). Not wrong—just less clean.
+  On Windows, if `uv` is not found, add the install dir to your user PATH (then open a new terminal):
 
-**When each is appropriate**
+  ```powershell
+  [Environment]::SetEnvironmentVariable(
+    "Path",
+    $env:Path + ";C:\Users\$env:USERNAME\.local\bin",
+    [EnvironmentVariableTarget]::User
+  )
+  ```
 
-| Use `pip install uv` when … | Use the PowerShell installer when … |
-| ---------------------------- | ------------------------------------ |
-| Python is already installed | You want the official recommended install |
-| You want the fastest path | You want uv independent of Python |
-| Corporate environment blocks script installers | You want cleaner machine bootstrap |
-| You want zero external installer logic | You may later use `uv python install` |
-| CI already has Python and just needs uv | You want fewer interpreter/path edge cases. **Best for fresh machines.** |
+### Sync environment
 
-**Fast pragmatic install** (Python already on the machine):
 
-```powershell
-py -m pip install --user uv
-```
+| Goal                          | Command                           |
+| ----------------------------- | --------------------------------- |
+| Tests/lint only (no torch)    | `uv sync --group dev`             |
+| Run benchmarks (with PyTorch) | `uv sync --group dev --group gpu` |
 
-**Cleaner long-term install** (standalone; recommended for fresh machines):
 
-```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
+Use the CLI with `uv run sfb ...` (no need to activate the venv). Check GPU: `uv run python -c "import torch; print('CUDA:', torch.cuda.is_available())"`.
 
-**Why the PATH step exists (Windows):** The installer typically puts `uv` in `C:\Users\<user>\.local\bin`. If that directory is not on PATH, Windows won’t find `uv`. Add it once if needed:
-
-```powershell
-[Environment]::SetEnvironmentVariable(
-  "Path",
-  $env:Path + ";C:\Users\$env:USERNAME\.local\bin",
-  [EnvironmentVariableTarget]::User
-)
-```
-
-Then open a new terminal so `uv` is callable globally.
-
-**Summary:** Need quick and simple → `py -m pip install --user uv`. Need proper toolchain / fresh machine / best practice → use the [Astral PowerShell installer](https://astral.sh/uv/install.ps1), not pip.
-
-#### Dependency structure
-
-Dependencies are split so the environment is reproducible and torch stays optional and machine-specific:
-
-| Layer | Purpose |
-| ----- | -------- |
-| **Core** | Universal runtime: PyYAML, tqdm, spacy, pandas, matplotlib. No torch. |
-| **Dev group** | Tooling only (not needed at benchmark runtime): build, pytest, ruff, ipykernel. |
-| **GPU group** | PyTorch (CUDA build). Heavy and environment-specific; kept out of core so CPU-only setups don’t pull it. |
-
-That gives:
-
-- **CPU/basic setup** — core + dev tooling, no torch. Use when you only run tests/lint.
-- **GPU setup** — core + dev + torch (CUDA). Use when you run benchmarks (CLI uses GPU if available; the same torch build also runs on CPU).
-
-#### Best command flow
-
-**Local dev without GPU** (tests, lint, no benchmark runs):
-
-```bash
-uv sync --group dev
-```
-
-**Local dev with GPU** (run benchmarks; torch from CUDA index):
-
-```bash
-uv sync --group dev --group gpu
-```
-
-Then run the CLI with `uv run sfb ...`; no need to activate the venv. To confirm PyTorch sees the GPU:
-
-```bash
-uv run python -c "import torch; print('CUDA:', torch.cuda.is_available()); print('Device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A')"
-```
-
-`uv sync` (with or without groups) resolves from `pyproject.toml`, updates `uv.lock`, and installs the project in editable mode.
+**Dependency layers:** Core (pandas, matplotlib, PyYAML, etc.) + optional dev (pytest, ruff) + optional GPU (PyTorch). CPU-only setups skip the GPU group.
 
 ---
 
-### 2. CLI Usage (`sfb`)
+## CLI overview
 
-After running `uv sync --group dev --group gpu` (or at least `--group gpu` so torch is installed), the `sfb` CLI is available. Either **activate the venv** (e.g. `.venv\Scripts\activate` on Windows) and run `sfb ...`, or run **`uv run sfb ...`** without activating—both use the project environment.
+After `uv sync --group dev --group gpu`, run `sfb` via `**uv run sfb ...`** or activate the venv and run `sfb ...`.
 
-**List tasks, models, and losses:**
-
-```bash
-sfb list               # Summary
-sfb list --tasks       # Show available tasks
-sfb list --models      # Show available models
-sfb list --losses      # Show available loss functions
-sfb list --config      # Show default config
-```
-
-**Show version:**
+**List tasks, models, losses, defaults:**
 
 ```bash
+sfb list --tasks    # copy, sorting, reverse, ...
+sfb list --models   # simple_nn, gru, ...
+sfb list --losses   # cross_entropy, shift_ce
+sfb list --config   # default config values
 sfb version
 ```
 
-**Run a benchmark:**
+**Data layout** (under `data/`):
 
-**Data layout** (folders under `data/`, relative to project root):
-- `data/results/` — results table (`results.csv`), one row per experiment; `sfb run` and `sfb sweep` append here by default
-- `data/traces/` — step-level history from `sfb run --trace` for learning curve plots
-- `data/figures/` — saved plots; `sfb report --save name.png` writes to `data/figures/name.png` by default
+
+| Path                | Purpose                                                               |
+| ------------------- | --------------------------------------------------------------------- |
+| `data/results/`     | Results table (`results.csv`); `run` and `sweep` append here          |
+| `data/traces/`      | Step-level history (e.g. `sfb run --trace`) for learning curves       |
+| `data/checkpoints/` | Saved model weights (saved by default; use `--no-save-model` to skip) |
+| `data/figures/`     | Saved plots; `sfb report --save name.png` writes here by default      |
+
+
+---
+
+## Run a single experiment
+
+Good for trying one task/model and inspecting behavior. **Copy task** is a minimal example: the model must output the input sequence unchanged.
+
+**Basic copy run (defaults: seq_len 32, vocab 64, 5000 steps):**
 
 ```bash
-# Sorting task — summary appended to data/results/results.csv
-sfb run --task sorting --seq-len 32 --vocab-size 64 --steps 5000
-
-# Save step history for learning curves
-sfb run -t sorting --trace
-
-# Reverse task with GRU
-sfb run -t reverse -m gru --seq-len 32 --steps 5000
-
-# Copy task
-sfb run -t copy -b 128 --eval-every 200
-
-# YAML config
-sfb run -t sorting -c configs/generation_default.yaml --steps 2000
+sfb run -t copy -m simple_nn
 ```
 
-**Sweep and report:**
+Results: one row appended to `data/results/results.csv`, and a checkpoint saved to `data/checkpoints/` (e.g. `copy_simple_nn_0.pt`).
+
+**Copy with explicit size and training settings:**
+
+```bash
+sfb run -t copy -m gru --seq-len 32 --vocab-size 64 -n 5000 -b 64 --eval-every 1000
+```
+
+**Save step-level history** for learning-curve plots (writes to `data/traces/` or a path you give):
+
+```bash
+sfb run -t copy -m simple_nn --trace
+# or
+sfb run -t copy -m simple_nn -o my_trace.csv
+```
+
+**See example predictions** after training:
+
+```bash
+sfb run -t copy -m gru --show-examples 5
+```
+
+**Other tasks:** same pattern. Examples:
+
+```bash
+sfb run -t sorting -m simple_nn --seq-len 32 --vocab-size 64
+sfb run -t reverse -m gru --seq-len 32 -n 5000
+```
+
+**YAML config** (overrides with CLI): `sfb run -t copy -c configs/generation_default.yaml --steps 2000`.
+
+**Skip saving checkpoint:** `sfb run -t copy -m simple_nn --no-save-model`
+
+---
+
+## Run a full sweep
+
+Run many (task × model × hyperparameter) combinations from one or more YAML configs. List values in a config become grid dimensions (Cartesian product). You can pass multiple configs; all runs are merged and deduplicated.
 
 ```bash
 sfb sweep -c configs/run_sweep.yaml
-
-# Visualize (metrics grid, learning curve, noise sensitivity)
-sfb report
-sfb report --save metrics.png                    # saves to data/figures/metrics.png
-sfb report curve data/traces/sorting_simple_nn_*.csv --save curve.png   # plot trace, save to data/figures/
-
-# Analyze the three dials: faceted heatmaps or line plots
-sfb report --x seq_len --y vocab_size --facet-by target_noise --save heatmaps_by_noise.png
-sfb report noise --save noise_sensitivity.png      # line plot: metric vs target_noise
-sfb report seq-len --save seq_len_sensitivity.png  # line plot: metric vs seq_len
-sfb report vocab --save vocab_sensitivity.png      # line plot: metric vs vocab_size
+# Exhaustive copy: all models, one scale (7 runs)
+sfb sweep -c configs/copy_all_models.yaml
+# Multiple configs in one go
+sfb sweep -c configs/copy_all_models.yaml -c configs/run_sweep.yaml
 ```
 
----
+- Results append to `data/results/results.csv` (or `-o path.csv`). Use `--overwrite` to replace the file.
+- Each run saves a checkpoint by default; use `--no-save-model` to disable.
 
-#### Common `sfb run` Options
+**Sweep options:**
 
-| Option         | Short | Description                       |
-| -------------- |-------|-----------------------------------|
-| `--task`       | `-t`  | sorting, copy, reverse            |
-| `--model`      | `-m`  | simple_nn or gru (default: simple_nn) |
-| `--loss`       | `-l`  | Loss (default: cross_entropy)     |
-| `--seq-len`    |       | Sequence length                   |
-| `--vocab-size` |       | Vocabulary size                   |
-| `--target-noise` |     | Label noise rate [0-1] during training (0 = none) |
-| `--d-model`    |       | Model hidden dimension            |
-| `--steps`      | `-n`  | Training steps                    |
-| `--batch-size` | `-b`  | Batch size                        |
-| `--eval-every` |       | Evaluation interval (steps)       |
-| `--output`     | `-o`  | Save step history to path (optional) |
-| `--trace`      |       | Save step history to data/traces/ |
-| `--no-append-summary` | | Skip appending to data/results/results.csv |
-| `--config`     | `-c`  | YAML config path                  |
-| `--device`     |       | auto, cpu, or cuda                |
-| `--seed`       |       | Random seed                       |
-| `--show-examples` |   | Show N example predictions at end (e.g. `--show-examples` or `--show-examples 3`) |
+| Option            | Description                                                          |
+| ----------------- | -------------------------------------------------------------------- |
+| `-c` / `--config` | One or more sweep YAML paths (required); list values = grid; multiple files = union of runs |
+| `-o` / `--output` | Results CSV (default: data/results/results.csv) |
+| `--overwrite`     | Replace results file instead of appending       |
+| `--no-save-model` | Do not save checkpoints                         |
+| `--device`        | auto | cpu | cuda (default: auto)               |
 
-#### Analyzing the three dials (seq_len, vocab_size, target_noise)
-
-| Report mode | Command | Use case |
-| ----------- | ------- | -------- |
-| Metrics heatmap | `sfb report --x seq_len --y vocab_size --facet-by model` | 2D grid, one subplot per model |
-| Heatmaps by noise | `sfb report --x seq_len --y vocab_size --facet-by target_noise` | Same grid, one subplot per noise level |
-| Noise sensitivity | `sfb report noise --save noise.png` | Line plot: metric vs target_noise |
-| Seq length sensitivity | `sfb report seq-len --save seq_len.png` | Line plot: metric vs seq_len |
-| Vocab size sensitivity | `sfb report vocab --save vocab.png` | Line plot: metric vs vocab_size |
-| Dial on axis | `sfb report --x target_noise --y task` | Any dial on x-axis (e.g. target_noise: 0, 0.1, 0.2) |
-
-#### `sfb sweep` Options
-
-| Option     | Short | Description                                    |
-| ---------- |-------|------------------------------------------------|
-| `--config` | `-c`  | Sweep YAML (list values = grid dimensions)     |
-| `--output` | `-o`  | Results path (default: data/results/results.csv) |
-| `--overwrite` |     | Replace results file instead of appending |
-| `--device` |       | auto, cpu, or cuda                             |
-
-**Device / CUDA:** The CLI uses `--device auto` by default (GPU if available). To use GPU, run `uv sync --group dev --group gpu`.
 
 ---
 
-### 3. Adding Custom Models and Tasks (Registry)
+## Report and visualize
 
-Models and tasks self-register via decorators. **No CLI changes needed** when adding a new model or task.
+```bash
+sfb report                                    # Metrics grid (default filters)
+sfb report --save metrics.png                  # Save to data/figures/
+sfb report curve data/traces/copy_simple_nn_*.csv --save curve.png
+sfb report noise --save noise.png              # Metric vs target_noise
+sfb report seq-len --save seq_len.png          # Metric vs seq_len
+sfb report vocab --save vocab.png              # Metric vs vocab_size
+```
 
-**Add a model:** create `src/sfb/models/my_model.py`:
+Filter by task/model/seq_len/vocab_size/target_noise; set `--x`, `--y`, `--metric`, `--facet-by` for grids. Example: `sfb report --x seq_len --y vocab_size --facet-by model --save grid.png`.
+
+**Predict from a checkpoint:** `sfb predict data/checkpoints/copy_gru_0.pt -n 5`
+
+---
+
+## `sfb run` options (reference)
+
+
+| Option                | Short | Description                                        |
+| --------------------- | ----- | -------------------------------------------------- |
+| `--task`              | `-t`  | Task: copy, sorting, reverse (required)            |
+| `--model`             | `-m`  | Model (default: simple_nn)                         |
+| `--loss`              | `-l`  | cross_entropy or shift_ce (default: cross_entropy) |
+| `--seq-len`           |       | Sequence length                                    |
+| `--vocab-size`        |       | Vocabulary size                                    |
+| `--target-noise`      |       | Label noise [0–1] during training                  |
+| `--d-model`           |       | Model hidden dimension                             |
+| `--steps`             | `-n`  | Training steps (default: 5000)                     |
+| `--batch-size`        | `-b`  | Batch size                                         |
+| `--eval-every`        |       | Eval every N steps (default: 1000)                 |
+| `-o` / `--output`     |       | Path for step history (optional)                   |
+| `--trace`             |       | Save step history to data/traces/                  |
+| `--no-append-summary` |       | Do not append to results.csv                       |
+| `--no-save-model`     |       | Do not save checkpoint (default: save)             |
+| `-c` / `--config`     |       | YAML config path                                   |
+| `--device`            |       | auto | cpu | cuda (default: auto)                  |
+| `--seed`              |       | Random seed                                        |
+| `--show-examples`     |       | Show N example predictions at end                  |
+
+
+---
+
+## Adding custom models and tasks
+
+Models and tasks self-register via decorators. No CLI changes needed.
+
+**Model** — create `src/sfb/models/my_model.py`:
 
 ```python
 from sfb.registry import register_model
@@ -223,7 +209,7 @@ class MyModel(BaseModel):
     ...
 ```
 
-**Add a task:** create `src/sfb/tasks/my_task.py`:
+**Task** — create `src/sfb/tasks/my_task.py`:
 
 ```python
 from sfb.registry import register_task
@@ -235,11 +221,4 @@ class MyTask(BaseTask):
     ...
 ```
 
-Registry options:
-- **display_params** – params shown in sweep CSV model column (e.g. `simple_nn(d_model=64)`)
-- **constructor_params** – args passed to model `__init__`
-- **param_defaults** – defaults for sweep/run (e.g. `n_layers=1` for GRU)
-
-Run `sfb list --tasks` and `sfb list --models` to see registered items.
-
----
+Then `sfb list --tasks` and `sfb list --models` show the new entries. Registry: **display_params** (shown in CSV), **constructor_params** (passed to `__init_`_), **param_defaults** (sweep/run defaults).

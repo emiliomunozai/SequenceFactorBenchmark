@@ -13,29 +13,47 @@ def cross_entropy(logits, targets):
     )
 
 
-def shift_tolerant_ce(logits, targets, window=2, sigma=1.0):
-    """
-    Shift-tolerant cross-entropy.  At each output position t the target is a
-    soft distribution that blends the one-hot targets from positions
-    [t-window … t+window], weighted by a Gaussian kernel with the given sigma.
 
-    A perfect copy shifted by one position is penalised much less than with
-    standard CE, while a perfectly aligned copy still achieves the optimum.
-
-    logits: [B, L, V]   targets: [B, L]
+def shift_tolerant_ce(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    window: int = 2,
+    sigma: float | None = None,
+) -> torch.Tensor:
     """
+    Shift-tolerant cross-entropy for sequence copy tasks.
+
+    At each position t the target is a soft distribution blending the
+    one-hot targets from [t-window … t+window], weighted by a Gaussian
+    with the given sigma.  A copy shifted by one position is penalised
+    much less than with standard CE; a perfectly aligned copy still
+    achieves the global optimum.
+
+    Args:
+        logits:  [B, L, V]
+        targets: [B, L]  (integer token ids)
+        window:  max positional offset to blend (default 2)
+        sigma:   Gaussian std-dev over offsets; defaults to window/2,
+                 so the window edge gets ~14% relative weight.
+
+    Returns:
+        Scalar loss.
+    """
+    if sigma is None:
+        sigma = window / 2.0
+
     B, L, V = logits.shape
 
-    offsets = torch.arange(-window, window + 1, device=targets.device)
+    offsets = torch.arange(-window, window + 1, device=targets.device)  # [2w+1]
     weights = torch.exp(-offsets.float() ** 2 / (2 * sigma ** 2))
-    weights = weights / weights.sum()  # [2*window+1]
+    weights = weights / weights.sum()                                    # normalised
 
-    one_hot = F.one_hot(targets, V).float()                     # [B, L, V]
-    padded = F.pad(one_hot, (0, 0, window, window))             # [B, L+2w, V]
+    one_hot = F.one_hot(targets, V).float()                              # [B, L, V]
+    padded  = F.pad(one_hot, (0, 0, window, window))                     # [B, L+2w, V]
 
     soft_targets = torch.zeros_like(one_hot)
-    for i, off in enumerate(range(-window, window + 1)):
+    for i, off in enumerate(offsets.tolist()):
         soft_targets += weights[i] * padded[:, window + off : window + off + L, :]
 
-    log_probs = F.log_softmax(logits, dim=-1)
+    log_probs = F.log_softmax(logits, dim=-1)                            # [B, L, V]
     return -(soft_targets * log_probs).sum(dim=-1).mean()

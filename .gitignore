@@ -213,6 +213,7 @@ data/*
 !data/figures/*
 !data/results/*
 !data/traces/*
+!data/checkpoints/*
 
 agent.md
 
