@@ -4,7 +4,7 @@ reconstructs per-position logits.  Tests whether the model can learn a
 compact internal representation sufficient for the target task.
 """
 from torch import nn
-from seqfacben.registry import register_model
+from sfb.registry import register_model
 
 
 @register_model(

@@ -3,7 +3,7 @@ LSTM encoder: processes the sequence step-by-step with a Long Short-Term Memory 
 Stronger gating than GRU — cell state allows selective memory retention.
 """
 from torch import nn
-from seqfacben.registry import register_model
+from sfb.registry import register_model
 
 
 @register_model(

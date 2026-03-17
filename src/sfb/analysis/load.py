@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 
-from seqfacben.results import default_results_path
+from sfb.results import default_results_path
 
 CONFIG_COLS = ["task", "loss", "seq_len", "vocab_size", "target_noise", "d_model", "model"]
 

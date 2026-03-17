@@ -22,8 +22,8 @@ def _load_models():
     global _models_loaded
     if _models_loaded:
         return
-    import seqfacben.models as models_pkg
-    for importer, modname, _ in pkgutil.iter_modules(models_pkg.__path__, prefix="seqfacben.models."):
+    import sfb.models as models_pkg
+    for importer, modname, _ in pkgutil.iter_modules(models_pkg.__path__, prefix="sfb.models."):
         importlib.import_module(modname)
     _models_loaded = True
 
@@ -32,8 +32,8 @@ def _load_tasks():
     global _tasks_loaded
     if _tasks_loaded:
         return
-    import seqfacben.tasks as tasks_pkg
-    for importer, modname, _ in pkgutil.iter_modules(tasks_pkg.__path__, prefix="seqfacben.tasks."):
+    import sfb.tasks as tasks_pkg
+    for importer, modname, _ in pkgutil.iter_modules(tasks_pkg.__path__, prefix="sfb.tasks."):
         if "base" not in modname:
             importlib.import_module(modname)
     _tasks_loaded = True

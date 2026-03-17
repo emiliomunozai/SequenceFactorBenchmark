@@ -1,5 +1,5 @@
 import torch
-from seqfacben.generators.base import BaseGenerator
+from sfb.generators.base import BaseGenerator
 
 class RandomSequenceGenerator(BaseGenerator):
     def sample(self, batch_size: int):

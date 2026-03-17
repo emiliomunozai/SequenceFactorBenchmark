@@ -14,21 +14,31 @@ dependencies = [
     "PyYAML>=6.0",
     "tqdm==4.67.1",
     "spacy==3.8.11",
-    "torch>=2.0",
     "pandas>=2.0",
     "matplotlib>=3.7",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "build>=1.0",
     "pytest>=7.0",
     "ruff>=0.4",
     "ipykernel",
 ]
+gpu = [
+    "torch>=2.0",
+]
 
 [project.scripts]
-sfb = "seqfacben.cli:main"
+sfb = "sfb.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/seqfacben"]
+packages = ["src/sfb"]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }

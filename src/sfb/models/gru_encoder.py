@@ -3,7 +3,7 @@ GRU encoder: processes the sequence step-by-step with a Gated Recurrent Unit.
 Well-suited for sequence-oriented tasks like reverse.
 """
 from torch import nn
-from seqfacben.registry import register_model
+from sfb.registry import register_model
 
 
 @register_model(

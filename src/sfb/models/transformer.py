@@ -12,7 +12,7 @@ import math
 import torch
 import torch.nn as nn
 
-from seqfacben.registry import register_model
+from sfb.registry import register_model
 
 
 class SinusoidalPE(nn.Module):

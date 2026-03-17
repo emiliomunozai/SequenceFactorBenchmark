@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from seqfacben.analysis.load import last_row_per_config
+from sfb.analysis.load import last_row_per_config
 
 
 def plot_metrics_grid(

@@ -8,14 +8,7 @@ Sequence model benchmark for copy, sorting, and reverse tasks under controlled s
 
 ## Setup Instructions
 
-This project requires **Python 3.14.3** (see `pyproject.toml`).  
-The required version is enforced via:
-
-```toml
-requires-python = "==3.14.3.*"
-```
-
-All dependencies and the virtual environment are managed using [`uv`](https://github.com/astral-sh/uv).
+This project requires **Python 3.12+** (see `pyproject.toml`). Dependencies and the virtual environment are managed using [`uv`](https://github.com/astral-sh/uv).
 
 ---
 
@@ -23,66 +16,86 @@ All dependencies and the virtual environment are managed using [`uv`](https://gi
 
 #### Install `uv`
 
-```bash
-pip install uv
+`uv` is used to create virtual envs, manage Python versions, manage dependencies, and replace pip/pip-tools/venv/pipx. Installing it via `pip` is slightly circular (using old Python tooling to install the tool that replaces it). Not wrong—just less clean.
+
+**When each is appropriate**
+
+| Use `pip install uv` when … | Use the PowerShell installer when … |
+| ---------------------------- | ------------------------------------ |
+| Python is already installed | You want the official recommended install |
+| You want the fastest path | You want uv independent of Python |
+| Corporate environment blocks script installers | You want cleaner machine bootstrap |
+| You want zero external installer logic | You may later use `uv python install` |
+| CI already has Python and just needs uv | You want fewer interpreter/path edge cases. **Best for fresh machines.** |
+
+**Fast pragmatic install** (Python already on the machine):
+
+```powershell
+py -m pip install --user uv
 ```
 
-#### Create a virtual environment with Python 3.14
+**Cleaner long-term install** (standalone; recommended for fresh machines):
 
-```bash
-uv venv .venv --python 3.14
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-#### Activate the environment
+**Why the PATH step exists (Windows):** The installer typically puts `uv` in `C:\Users\<user>\.local\bin`. If that directory is not on PATH, Windows won’t find `uv`. Add it once if needed:
 
-- **Linux/macOS**
-  ```bash
-  source .venv/bin/activate
-  ```
-- **Windows (PowerShell)**
-  ```powershell
-  .venv\Scripts\activate
-  ```
-
-#### Install the project (CPU by default)
-
-```bash
-uv sync
+```powershell
+[Environment]::SetEnvironmentVariable(
+  "Path",
+  $env:Path + ";C:\Users\$env:USERNAME\.local\bin",
+  [EnvironmentVariableTarget]::User
+)
 ```
 
-For **running tests** (pytest, build):
+Then open a new terminal so `uv` is callable globally.
+
+**Summary:** Need quick and simple → `py -m pip install --user uv`. Need proper toolchain / fresh machine / best practice → use the [Astral PowerShell installer](https://astral.sh/uv/install.ps1), not pip.
+
+#### Dependency structure
+
+Dependencies are split so the environment is reproducible and torch stays optional and machine-specific:
+
+| Layer | Purpose |
+| ----- | -------- |
+| **Core** | Universal runtime: PyYAML, tqdm, spacy, pandas, matplotlib. No torch. |
+| **Dev group** | Tooling only (not needed at benchmark runtime): build, pytest, ruff, ipykernel. |
+| **GPU group** | PyTorch (CUDA build). Heavy and environment-specific; kept out of core so CPU-only setups don’t pull it. |
+
+That gives:
+
+- **CPU/basic setup** — core + dev tooling, no torch. Use when you only run tests/lint.
+- **GPU setup** — core + dev + torch (CUDA). Use when you run benchmarks (CLI uses GPU if available; the same torch build also runs on CPU).
+
+#### Best command flow
+
+**Local dev without GPU** (tests, lint, no benchmark runs):
 
 ```bash
-uv sync --extra dev
+uv sync --group dev
 ```
 
-Then run `uv run pytest` or `pytest`.
-
-For **CUDA** (new GPU hardware, e.g. RTX 50 series):
+**Local dev with GPU** (run benchmarks; torch from CUDA index):
 
 ```bash
-uv sync
-uv pip uninstall torch
-uv pip install torch --index-url https://download.pytorch.org/whl/cu128
+uv sync --group dev --group gpu
 ```
 
-This replaces the default CPU-only PyTorch with the CUDA 12.8 build. Use `cu124`, `cu121`, or `cu118` for older GPUs. Verify with:
+Then run the CLI with `uv run sfb ...`; no need to activate the venv. To confirm PyTorch sees the GPU:
 
 ```bash
-python -c "import torch; print('CUDA:', torch.cuda.is_available()); print('Device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A')"
+uv run python -c "import torch; print('CUDA:', torch.cuda.is_available()); print('Device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A')"
 ```
 
-This automatically:
-- Resolves dependencies from `pyproject.toml`
-- Creates/updates `uv.lock`
-- Installs the project in *editable* mode  
-  (_No need to run `pip install -e .`_)
+`uv sync` (with or without groups) resolves from `pyproject.toml`, updates `uv.lock`, and installs the project in editable mode.
 
 ---
 
 ### 2. CLI Usage (`sfb`)
 
-After running `uv sync`, the `sfb` CLI command is available.
+After running `uv sync --group dev --group gpu` (or at least `--group gpu` so torch is installed), the `sfb` CLI is available. Either **activate the venv** (e.g. `.venv\Scripts\activate` on Windows) and run `sfb ...`, or run **`uv run sfb ...`** without activating—both use the project environment.
 
 **List tasks, models, and losses:**
 
@@ -185,7 +198,7 @@ sfb report vocab --save vocab_sensitivity.png      # line plot: metric vs vocab_
 | `--overwrite` |     | Replace results file instead of appending |
 | `--device` |       | auto, cpu, or cuda                             |
 
-**Device / CUDA:** The CLI uses `--device auto` by default (GPU if available). If you see "cpu (GPU not available)", replace torch with the CUDA build (see [Install the project](#install-the-project-cpu-by-default) above).
+**Device / CUDA:** The CLI uses `--device auto` by default (GPU if available). To use GPU, run `uv sync --group dev --group gpu`.
 
 ---
 
@@ -193,11 +206,11 @@ sfb report vocab --save vocab_sensitivity.png      # line plot: metric vs vocab_
 
 Models and tasks self-register via decorators. **No CLI changes needed** when adding a new model or task.
 
-**Add a model:** create `src/seqfacben/models/my_model.py`:
+**Add a model:** create `src/sfb/models/my_model.py`:
 
 ```python
-from seqfacben.registry import register_model
-from seqfacben.models.base import BaseModel
+from sfb.registry import register_model
+from sfb.models.base import BaseModel
 
 @register_model(
     "my_model",
@@ -210,11 +223,11 @@ class MyModel(BaseModel):
     ...
 ```
 
-**Add a task:** create `src/seqfacben/tasks/my_task.py`:
+**Add a task:** create `src/sfb/tasks/my_task.py`:
 
 ```python
-from seqfacben.registry import register_task
-from seqfacben.tasks.base import BaseTask
+from sfb.registry import register_task
+from sfb.tasks.base import BaseTask
 
 @register_task("my_task", description="what it does")
 class MyTask(BaseTask):

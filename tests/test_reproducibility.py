@@ -3,7 +3,7 @@ Unit tests to verify that experiments are reproducible given a fixed config and 
 """
 import torch
 
-from seqfacben.cli import (
+from sfb.cli import (
     _run_one_experiment,
     _config_signature,
     _expand_sweep_config,

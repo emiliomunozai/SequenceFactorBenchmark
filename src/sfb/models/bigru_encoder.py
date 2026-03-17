@@ -4,7 +4,7 @@ Each output position has context from the full sequence, giving it an advantage
 on tasks where future tokens inform the current output (e.g. copy, sorting).
 """
 from torch import nn
-from seqfacben.registry import register_model
+from sfb.registry import register_model
 
 
 @register_model(

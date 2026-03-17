@@ -1,8 +1,8 @@
 """
 Analysis kit for benchmark results: load, filter, visualize.
 """
-from seqfacben.analysis.load import load_results, filter_results
-from seqfacben.analysis.visualize import (
+from sfb.analysis.load import load_results, filter_results
+from sfb.analysis.visualize import (
     plot_metrics_grid,
     plot_learning_curve,
     plot_sensitivity,

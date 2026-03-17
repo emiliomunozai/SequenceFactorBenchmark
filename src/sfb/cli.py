@@ -13,8 +13,8 @@ from importlib.metadata import version, PackageNotFoundError
 import pandas as pd
 import torch
 
-from seqfacben.generators.random import RandomSequenceGenerator
-from seqfacben.results import (
+from sfb.generators.random import RandomSequenceGenerator
+from sfb.results import (
     default_results_path,
     append_results,
     overwrite_results,
@@ -24,7 +24,7 @@ from seqfacben.results import (
     figures_dir,
     checkpoints_dir,
 )
-from seqfacben.registry import (
+from sfb.registry import (
     get_model,
     get_task,
     all_model_names,
@@ -32,8 +32,8 @@ from seqfacben.registry import (
     all_model_param_keys,
     param_defaults_from_models,
 )
-from seqfacben.manager.task_manager import TaskManager
-from seqfacben.losses import cross_entropy, shift_tolerant_ce
+from sfb.manager.task_manager import TaskManager
+from sfb.losses import cross_entropy, shift_tolerant_ce
 
 LOSSES = {
     "cross_entropy": cross_entropy,
@@ -504,7 +504,7 @@ def _resolve_save_path(save: str | None) -> Path | None:
 
 def cmd_report(args):
     """Report and visualize results."""
-    from seqfacben.analysis import (
+    from sfb.analysis import (
         load_results,
         filter_results,
         plot_metrics_grid,

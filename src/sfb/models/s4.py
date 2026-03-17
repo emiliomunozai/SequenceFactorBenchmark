@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from seqfacben.registry import register_model
+from sfb.registry import register_model
 
 
 class S4DLayer(nn.Module):
