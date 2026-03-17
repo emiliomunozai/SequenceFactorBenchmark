@@ -381,7 +381,7 @@ def cmd_run(args):
         results_path = append_results([row])
         print(f"Appended summary to {results_path}")
 
-    if getattr(args, "save_model", False):
+    if not getattr(args, "no_save_model", False):
         ckpt_path = _save_checkpoint(model, run_config, run_id=run_id)
         print(f"Saved model checkpoint to {ckpt_path}")
 
@@ -426,7 +426,7 @@ def cmd_sweep(args):
     base_run_id = 0 if overwrite else len(existing_rows)
     for i, run_config in enumerate(to_run):
         print(f"  [{i + 1}/{n}] model={run_config.get('model', 'simple_nn')} task={run_config['task']} seq_len={run_config['sequence_length']}")
-        row = _run_one_experiment(run_config, device, run_id=base_run_id + i, save_model=getattr(args, "save_model", False))
+        row = _run_one_experiment(run_config, device, run_id=base_run_id + i, save_model=not getattr(args, "no_save_model", False))
         if overwrite and i == 0:
             overwrite_results([row], out_path)
         else:
@@ -677,7 +677,7 @@ def main():
         metavar="N",
         help="Show N example predictions at end (default: 5)",
     )
-    run_p.add_argument("--save-model", action="store_true", help="Save model checkpoint to data/checkpoints/")
+    run_p.add_argument("--no-save-model", action="store_true", help="Do not save model checkpoint to data/checkpoints/ (default: save)")
     run_p.set_defaults(func=cmd_run)
 
     # sweep: one config file, list values = parameter grid (Cartesian product)
@@ -696,7 +696,7 @@ def main():
         help="Results path (default: data/results/results.csv)",
     )
     sweep_p.add_argument("--overwrite", action="store_true", help="Replace results file instead of appending")
-    sweep_p.add_argument("--save-model", action="store_true", help="Save each model checkpoint to data/checkpoints/")
+    sweep_p.add_argument("--no-save-model", action="store_true", help="Do not save model checkpoints (default: save each to data/checkpoints/)")
     sweep_p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"], help="Device")
     sweep_p.set_defaults(func=cmd_sweep)
 
