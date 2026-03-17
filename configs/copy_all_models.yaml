@@ -3,7 +3,9 @@
 task: copy
 sequence_length: [64,128,256,512]
 vocabulary_size: [64,128,256]
-loss: [shift_tolerant_ce]
+loss: [
+  #shift_tolerant_ce,
+  cross_entropy]
 target_noise: [0.0, 0.1]
 batch_size: 128
 steps: 5000

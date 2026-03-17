@@ -209,11 +209,10 @@ __marimo__/
 
 # Data (ignore all files/folders within data/, but keep the data/ directory itself)
 data/*
-!data/.gitkeep
-!data/figures/*
-!data/results/*
-!data/traces/*
-!data/checkpoints/*
+!data/figures/.gitkeep
+!data/results/.gitkeep
+!data/traces/.gitkeep
+!data/checkpoints/.gitkeep
 
 agent.md
 

@@ -4,7 +4,6 @@ bottleneck, then reconstructs per-position logits.  Tests whether the
 model can learn a compact internal representation sufficient for the
 target task.
 """
-import torch
 from torch import nn
 from sfb.registry import register_model
 
