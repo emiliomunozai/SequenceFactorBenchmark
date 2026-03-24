@@ -1,7 +1,7 @@
 # Run: sfb sweep -c configs/copy_all_models.yaml
 
 task: copy
-sequence_length: [64,128,256,512]
+sequence_length: [64,128,256]
 vocabulary_size: [64,128,256]
 loss: [
   #shift_tolerant_ce,

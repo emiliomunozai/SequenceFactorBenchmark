@@ -41,6 +41,24 @@ LOSSES = {
     "shift_tolerant_ce": shift_tolerant_ce,
 }
 
+# Copied into run_config / checkpoints when present in YAML (see _run_config_from_args).
+_RUN_SUMMARY_OPTIONAL_KEYS = ("decoder", "d_bottleneck", "n_heads", "bottleneck_dim")
+
+
+def _is_missing_config_value(v) -> bool:
+    return v is None or (isinstance(v, float) and pd.isna(v))
+
+
+def _final_metrics_from_history(history: list, early_stopped: bool):
+    """Match sweep semantics: after early stop, report metrics at best val_acc step."""
+    if not history:
+        return None, None, None, None
+    if early_stopped:
+        best = max(history, key=lambda h: h["val_acc"])
+        return best["train_loss"], best["train_acc"], best["val_loss"], best["val_acc"]
+    last = history[-1]
+    return last["train_loss"], last["train_acc"], last["val_loss"], last["val_acc"]
+
 
 def _load_config(path: str) -> dict:
     import yaml
@@ -150,6 +168,18 @@ def _config_signature(cfg: dict) -> tuple:
         target_noise = float(target_noise)
     else:
         target_noise = None
+    def _sig_int(key: str) -> int | None:
+        v = cfg.get(key)
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return None
+        return int(v)
+
+    dec = cfg.get("decoder")
+    if dec is not None and not (isinstance(dec, float) and pd.isna(dec)):
+        dec_s = str(dec)
+    else:
+        dec_s = None
+
     return (
         model,
         str(cfg.get("task", "")),
@@ -158,6 +188,10 @@ def _config_signature(cfg: dict) -> tuple:
         int(vocab_size) if vocab_size is not None else None,
         int(cfg.get("d_model")) if cfg.get("d_model") is not None else None,
         int(cfg.get("n_layers")) if cfg.get("n_layers") is not None and not (isinstance(cfg.get("n_layers"), float) and pd.isna(cfg.get("n_layers"))) else 1,
+        _sig_int("d_bottleneck"),
+        _sig_int("n_heads"),
+        _sig_int("bottleneck_dim"),
+        dec_s,
         int(cfg.get("batch_size")) if cfg.get("batch_size") is not None else None,
         int(cfg.get("steps")) if cfg.get("steps") is not None else None,
         int(cfg.get("eval_every")) if cfg.get("eval_every") is not None else None,
@@ -196,7 +230,8 @@ def _build_task_and_model(args, config: dict):
     task_name = (getattr(args, "task", None) or "").lower()
     task_info = get_task(task_name)
     if task_info is None:
-        raise SystemExit(f"Unknown task: {args.task}. Use: {', '.join(all_task_names())}.")
+        t_disp = getattr(args, "task", None) or config.get("task")
+        raise SystemExit(f"Unknown task: {t_disp!r}. Use: {', '.join(all_task_names())}.")
 
     task = task_info["cls"](generator, loss_fn=loss_fn)
 
@@ -231,7 +266,7 @@ def _count_params(model) -> int:
 
 def _run_config_from_args(args, config: dict) -> dict:
     """Build run_config dict from args + config (for single run summary row)."""
-    return {
+    rc = {
         "model": getattr(args, "model", "simple_nn"),
         "task": getattr(args, "task", "sorting"),
         "loss": getattr(args, "loss", "cross_entropy"),
@@ -246,6 +281,11 @@ def _run_config_from_args(args, config: dict) -> dict:
         "seed": getattr(args, "seed"),
         "early_stopping": not getattr(args, "no_early_stop", False),
     }
+    for k in _RUN_SUMMARY_OPTIONAL_KEYS:
+        v = config.get(k)
+        if not _is_missing_config_value(v):
+            rc[k] = v
+    return rc
 
 
 def _args_from_run_config(run_config: dict):
@@ -299,22 +339,9 @@ def _run_one_experiment(run_config: dict, device: torch.device, run_id: int, sav
         no_hope_first_eval_at=no_hope_first_eval_at if no_hope_first_eval_at is not None else 100,
     )
     train_time_s = round(time.perf_counter() - t0, 2)
-    if not history:
-        final_train_loss = final_train_acc = final_val_loss = final_val_acc = None
-    else:
-        # When early stopped, use metrics from the best val_acc step (matches restored checkpoint)
-        if early_stopped:
-            best_entry = max(history, key=lambda h: h["val_acc"])
-            final_train_loss = best_entry["train_loss"]
-            final_train_acc = best_entry["train_acc"]
-            final_val_loss = best_entry["val_loss"]
-            final_val_acc = best_entry["val_acc"]
-        else:
-            last = history[-1]
-            final_train_loss = last["train_loss"]
-            final_train_acc = last["train_acc"]
-            final_val_loss = last["val_loss"]
-            final_val_acc = last["val_acc"]
+    final_train_loss, final_train_acc, final_val_loss, final_val_acc = _final_metrics_from_history(
+        history, early_stopped
+    )
     row = {
         "run_id": run_id,
         "model": _format_model_column(run_config),
@@ -407,14 +434,9 @@ def cmd_run(args):
     append_summary = not getattr(args, "no_append_summary", False)
     run_id = get_next_run_id()
     if append_summary:
-        if history:
-            last = history[-1]
-            final_train_loss = last["train_loss"]
-            final_train_acc = last["train_acc"]
-            final_val_loss = last["val_loss"]
-            final_val_acc = last["val_acc"]
-        else:
-            final_train_loss = final_train_acc = final_val_loss = final_val_acc = None
+        final_train_loss, final_train_acc, final_val_loss, final_val_acc = _final_metrics_from_history(
+            history, early_stopped
+        )
         row = {
             "run_id": run_id,
             "model": _format_model_column(run_config),
@@ -509,8 +531,8 @@ def cmd_list(args):
         return
     if args.losses:
         print("Losses:")
-        print("  cross_entropy – standard CE (exact position match)")
-        print("  shift_ce      – shift-tolerant CE (soft neighbour blending)")
+        print("  cross_entropy       – standard CE (exact position match)")
+        print("  shift_tolerant_ce   – shift-tolerant CE (soft neighbour blending)")
         return
     if args.models:
         print("Models:")
@@ -542,7 +564,7 @@ def cmd_list(args):
     print()
     print(f"Tasks:   {', '.join(all_task_names())}")
     print(f"Models:  {', '.join(all_model_names())}")
-    print("Losses:  cross_entropy")
+    print(f"Losses:  {', '.join(sorted(LOSSES))}")
     print()
     print("Usage:   sfb run --task <task> [options]")
     print("         sfb sweep -c <sweep.yaml> [ -c <other.yaml> ... ] [-o summary.csv]")

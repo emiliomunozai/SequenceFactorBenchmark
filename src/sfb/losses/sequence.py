@@ -13,7 +13,6 @@ def cross_entropy(logits, targets):
     )
 
 
-
 def shift_tolerant_ce(
     logits: torch.Tensor,
     targets: torch.Tensor,

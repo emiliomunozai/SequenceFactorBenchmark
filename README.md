@@ -53,7 +53,7 @@ After `uv sync --group dev --group gpu`, run `sfb` via `**uv run sfb ...`** or a
 ```bash
 sfb list --tasks    # copy, sorting, reverse, ...
 sfb list --models   # simple_nn, gru, ...
-sfb list --losses   # cross_entropy, shift_ce
+sfb list --losses   # cross_entropy, shift_tolerant_ce
 sfb list --config   # default config values
 sfb version
 ```
@@ -168,7 +168,7 @@ Filter by task/model/seq_len/vocab_size/target_noise; set `--x`, `--y`, `--metri
 | --------------------- | ----- | -------------------------------------------------- |
 | `--task`              | `-t`  | Task: copy, sorting, reverse (required)            |
 | `--model`             | `-m`  | Model (default: simple_nn)                         |
-| `--loss`              | `-l`  | cross_entropy or shift_ce (default: cross_entropy) |
+| `--loss`              | `-l`  | cross_entropy or shift_tolerant_ce (default: cross_entropy) |
 | `--seq-len`           |       | Sequence length                                    |
 | `--vocab-size`        |       | Vocabulary size                                    |
 | `--target-noise`      |       | Label noise [0–1] during training                  |

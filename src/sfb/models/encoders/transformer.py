@@ -1,23 +1,14 @@
-"""
-Vanilla Transformer encoder for sequence-to-sequence prediction.
-Uses sinusoidal positional encoding and standard multi-head self-attention
-with pre-norm residual blocks (GPT-2 style).
+"""Transformer over the full sequence, mean-pool, project to ``d_bottleneck``."""
 
-No causal mask — every position attends to the full sequence, which is
-appropriate for tasks like copy, sorting, and reverse where the entire
-input is available.
-"""
 import math
 
 import torch
 import torch.nn as nn
 
-from sfb.registry import register_model
+from sfb.models.codec import EncoderOutput, SequenceEncoder
 
 
 class SinusoidalPE(nn.Module):
-    """Fixed sinusoidal positional encoding."""
-
     def __init__(self, d_model: int, max_len: int = 8192):
         super().__init__()
         pe = torch.zeros(max_len, d_model)
@@ -25,15 +16,13 @@ class SinusoidalPE(nn.Module):
         div = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(pos * div)
         pe[:, 1::2] = torch.cos(pos * div)
-        self.register_buffer("pe", pe.unsqueeze(0))  # [1, max_len, d_model]
+        self.register_buffer("pe", pe.unsqueeze(0))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x + self.pe[:, :x.size(1)]
+        return x + self.pe[:, : x.size(1)]
 
 
 class TransformerBlock(nn.Module):
-    """Pre-norm Transformer block: LayerNorm -> MHA -> residual -> LayerNorm -> FFN -> residual."""
-
     def __init__(self, d_model: int, n_heads: int, dropout: float = 0.0):
         super().__init__()
         self.norm1 = nn.LayerNorm(d_model)
@@ -52,34 +41,30 @@ class TransformerBlock(nn.Module):
         return x
 
 
-@register_model(
-    "transformer",
-    display_params=["d_model", "n_layers", "n_heads"],
-    constructor_params=["vocab_size", "seq_len", "d_model", "n_layers", "n_heads"],
-    param_defaults={"n_layers": 4, "n_heads": 4},
-)
-class TransformerEncoder(nn.Module):
-    """Vanilla Transformer: embedding + sinusoidal PE -> N blocks -> linear head."""
-
+class TransformerSequenceEncoder(SequenceEncoder):
     def __init__(
         self,
         vocab_size: int,
         seq_len: int,
         d_model: int,
-        n_layers: int = 4,
-        n_heads: int = 4,
+        d_bottleneck: int,
+        n_layers: int,
+        n_heads: int,
     ):
-        super().__init__()
+        super().__init__(vocab_size, seq_len)
         self.embed = nn.Embedding(vocab_size, d_model)
         self.pe = SinusoidalPE(d_model, max_len=seq_len)
-        self.blocks = nn.ModuleList([
-            TransformerBlock(d_model, n_heads) for _ in range(n_layers)
-        ])
+        self.blocks = nn.ModuleList(
+            [TransformerBlock(d_model, n_heads) for _ in range(n_layers)]
+        )
         self.norm = nn.LayerNorm(d_model)
-        self.head = nn.Linear(d_model, vocab_size)
+        self.to_bottleneck = nn.Linear(d_model, d_bottleneck)
+        self.out_dim = d_bottleneck
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.pe(self.embed(x))
+    def encode(self, x):
+        h = self.pe(self.embed(x))
         for block in self.blocks:
-            x = block(x)
-        return self.head(self.norm(x))
+            h = block(h)
+        h = self.norm(h).mean(dim=1)
+        z = self.to_bottleneck(h)
+        return EncoderOutput(z=z)

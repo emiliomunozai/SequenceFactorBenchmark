@@ -17,4 +17,5 @@
 11. [Done] Loss functions resiliente a la permutacion, preguntar a chatgpt, podria ser CR con teacher forcing.
 12. [Pending] JEPA reference and idea
 13. [Done] Model predict example
+14. [Done] Encoder decoder and bottleneck logic throught the repo
      

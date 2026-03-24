@@ -2,7 +2,8 @@
 Registry for models and tasks. Models and tasks self-register via decorators.
 No CLI changes needed when adding a new model or task.
 
-To add a model: create `models/my_model.py` with @register_model("name", ...) on the class.
+To add a model: add `models/composed/my_model.py` with @register_model("name", ...) on the class
+(encoders / decoders go under `models/encoders` and `models/decoders`).
 To add a task: create `tasks/my_task.py` with @register_task("name", description="...") on the class.
 """
 import importlib
@@ -23,7 +24,10 @@ def _load_models():
     if _models_loaded:
         return
     import sfb.models as models_pkg
-    for importer, modname, _ in pkgutil.iter_modules(models_pkg.__path__, prefix="sfb.models."):
+    for _, modname, _ in pkgutil.iter_modules(models_pkg.__path__, prefix="sfb.models."):
+        importlib.import_module(modname)
+    import sfb.models.composed as composed_pkg
+    for _, modname, _ in pkgutil.iter_modules(composed_pkg.__path__, prefix="sfb.models.composed."):
         importlib.import_module(modname)
     _models_loaded = True
 
@@ -33,7 +37,7 @@ def _load_tasks():
     if _tasks_loaded:
         return
     import sfb.tasks as tasks_pkg
-    for importer, modname, _ in pkgutil.iter_modules(tasks_pkg.__path__, prefix="sfb.tasks."):
+    for _, modname, _ in pkgutil.iter_modules(tasks_pkg.__path__, prefix="sfb.tasks."):
         if "base" not in modname:
             importlib.import_module(modname)
     _tasks_loaded = True
