@@ -1,0 +1,57 @@
+# Single-batch overfit sanity sweep on copy: same (x, y) every step until converged.
+# Working stacks should drive final_train_acc / final_val_acc near 1.0 (same batch for eval).
+# Rows include overfit_single_batch=true in results.csv (for dedup vs normal sweeps).
+#
+# Run:  sfb sweep -c configs/sanity_overfit_copy.yaml -o data/results/sanity_overfit.csv
+# Pass heuristic: final_val_acc >= 0.99 and train not NaN (inspect CSV or report).
+
+task: copy
+loss: cross_entropy
+sequence_length: 16
+vocabulary_size: 32
+target_noise: 0.0
+batch_size: 8
+steps: 600
+eval_every: 100
+seed: 42
+
+early_stopping: false
+no_hope_threshold: 0
+overfit_single_batch: true
+
+d_model: 64
+d_bottleneck: 32
+n_heads: 4
+bottleneck_dim: 32
+
+models:
+  - model: simple_nn
+    decoder: linear
+
+  - model: gru
+    n_layers: 1
+    decoder: gru
+
+  - model: lstm
+    n_layers: 1
+    decoder: lstm
+
+  - model: bigru
+    n_layers: 1
+    d_bottleneck: 16
+    decoder: gru
+
+  - model: transformer
+    n_layers: 4
+    decoder: gru
+
+  - model: transformer
+    n_layers: 4
+    decoder: linear
+
+  - model: s4d
+    n_layers: 4
+    decoder: linear
+
+  - model: autoencoder
+    n_layers: 2

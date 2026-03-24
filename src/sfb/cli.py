@@ -100,6 +100,7 @@ def _flatten_model_params(config: dict) -> dict:
 def _expand_sweep_config(config: dict) -> list[dict]:
     """Expand a config into a list of run configs. List values → Cartesian product."""
     cfg = _flatten_model_params(config)
+    extra = {k: v for k, v in cfg.items() if k not in SWEEP_PARAM_KEYS}
     fixed = {}
     dims = {}
     for k in SWEEP_PARAM_KEYS:
@@ -109,10 +110,10 @@ def _expand_sweep_config(config: dict) -> list[dict]:
         else:
             fixed[k] = v
     if not dims:
-        return [fixed]
+        return [{**extra, **fixed}]
     keys = list(dims.keys())
     return [
-        {**fixed, **dict(zip(keys, combo))}
+        {**extra, **fixed, **dict(zip(keys, combo))}
         for combo in itertools.product(*(dims[k] for k in keys))
     ]
 
@@ -136,6 +137,68 @@ def _base_model_name(model_val) -> str:
     """Extract base model name from display string like 'simple_nn(d_model=64)'."""
     s = str(model_val or "simple_nn")
     return s.split("(")[0].strip() if "(" in s else s
+
+
+def _parse_model_column_params(model_col: str) -> dict[str, str]:
+    """Parse ``key=value`` pairs inside ``name(...)`` from the results ``model`` column."""
+    out: dict[str, str] = {}
+    s = str(model_col)
+    if "(" not in s or ")" not in s:
+        return out
+    inner = s[s.index("(") + 1 : s.rindex(")")]
+    for part in inner.split(","):
+        part = part.strip()
+        if "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        out[k.strip()] = v.strip()
+    return out
+
+
+def _model_constructor_param_keys(model_val) -> set[str]:
+    info = get_model(_base_model_name(model_val))
+    if not info:
+        return set()
+    return set(info.get("constructor_params", [])) - {"vocab_size", "seq_len"}
+
+
+def _sig_value_from_row_or_cfg(cfg: dict, key: str) -> int | str | None:
+    """Prefer explicit CSV/config key, else parse from ``model`` column (for sweep dedup)."""
+    v = cfg.get(key)
+    if isinstance(v, str) and v.strip() == "":
+        v = None
+    if v is not None and not (isinstance(v, float) and pd.isna(v)):
+        if key == "decoder":
+            return str(v)
+        try:
+            return int(v) if not isinstance(v, bool) else int(v)
+        except (TypeError, ValueError):
+            return str(v)
+    parsed = _parse_model_column_params(str(cfg.get("model", "")))
+    if key not in parsed:
+        return None
+    raw = parsed[key]
+    if key == "decoder":
+        return raw
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        return raw
+
+
+def _n_layers_signature_value(cfg: dict) -> int | None:
+    """Integer ``n_layers`` for dedup only if the model's constructor uses it."""
+    m = cfg.get("model", "simple_nn")
+    if "n_layers" not in _model_constructor_param_keys(m):
+        return None
+    v = _sig_value_from_row_or_cfg(cfg, "n_layers")
+    if v is not None and not isinstance(v, str):
+        return int(v)
+    info = get_model(_base_model_name(m))
+    d = (info or {}).get("param_defaults", {})
+    if "n_layers" in d:
+        return int(d["n_layers"])
+    return 1
 
 
 def _format_model_column(run_config: dict) -> str:
@@ -168,17 +231,51 @@ def _config_signature(cfg: dict) -> tuple:
         target_noise = float(target_noise)
     else:
         target_noise = None
-    def _sig_int(key: str) -> int | None:
-        v = cfg.get(key)
-        if v is None or (isinstance(v, float) and pd.isna(v)):
-            return None
-        return int(v)
 
-    dec = cfg.get("decoder")
-    if dec is not None and not (isinstance(dec, float) and pd.isna(dec)):
-        dec_s = str(dec)
+    dec_raw = _sig_value_from_row_or_cfg(cfg, "decoder")
+    if dec_raw is None:
+        base = _base_model_name(model_val)
+        dft = (get_model(base) or {}).get("param_defaults", {}).get("decoder")
+        dec_s = str(dft) if dft is not None else None
     else:
-        dec_s = None
+        dec_s = str(dec_raw)
+
+    # Missing key in YAML must match CSV rows that store False explicitly (same experiment).
+    ob = cfg.get("overfit_single_batch", False)
+    if isinstance(ob, float) and pd.isna(ob):
+        ob = False
+    elif isinstance(ob, str):
+        ob = ob.strip().lower() in ("1", "true", "yes")
+    overfit_sig = bool(ob)
+
+    db = _sig_value_from_row_or_cfg(cfg, "d_bottleneck")
+    bd = _sig_value_from_row_or_cfg(cfg, "bottleneck_dim")
+    if db is None:
+        db = bd
+    if bd is None:
+        bd = db
+    nh = _sig_value_from_row_or_cfg(cfg, "n_heads")
+    d_model_sig = _sig_value_from_row_or_cfg(cfg, "d_model")
+    if isinstance(d_model_sig, str):
+        try:
+            d_model_sig = int(float(d_model_sig))
+        except (TypeError, ValueError):
+            d_model_sig = None
+    elif d_model_sig is not None:
+        d_model_sig = int(d_model_sig)
+
+    def _sig_int_field(x):
+        if x is None:
+            return None
+        if isinstance(x, str):
+            try:
+                return int(float(x))
+            except ValueError:
+                return None
+        try:
+            return int(x)
+        except (TypeError, ValueError):
+            return None
 
     return (
         model,
@@ -186,17 +283,18 @@ def _config_signature(cfg: dict) -> tuple:
         str(cfg.get("loss", "")),
         int(seq_len) if seq_len is not None else None,
         int(vocab_size) if vocab_size is not None else None,
-        int(cfg.get("d_model")) if cfg.get("d_model") is not None else None,
-        int(cfg.get("n_layers")) if cfg.get("n_layers") is not None and not (isinstance(cfg.get("n_layers"), float) and pd.isna(cfg.get("n_layers"))) else 1,
-        _sig_int("d_bottleneck"),
-        _sig_int("n_heads"),
-        _sig_int("bottleneck_dim"),
+        d_model_sig,
+        _n_layers_signature_value(cfg),
+        _sig_int_field(db),
+        _sig_int_field(nh),
+        _sig_int_field(bd),
         dec_s,
         int(cfg.get("batch_size")) if cfg.get("batch_size") is not None else None,
         int(cfg.get("steps")) if cfg.get("steps") is not None else None,
         int(cfg.get("eval_every")) if cfg.get("eval_every") is not None else None,
         target_noise,
         seed,
+        overfit_sig,
     )
 
 
@@ -280,6 +378,7 @@ def _run_config_from_args(args, config: dict) -> dict:
         "eval_every": getattr(args, "eval_every", 1000),
         "seed": getattr(args, "seed"),
         "early_stopping": not getattr(args, "no_early_stop", False),
+        "overfit_single_batch": bool(config.get("overfit_single_batch", False)),
     }
     for k in _RUN_SUMMARY_OPTIONAL_KEYS:
         v = config.get(k)
@@ -316,15 +415,22 @@ def _run_one_experiment(run_config: dict, device: torch.device, run_id: int, sav
     param_count = _count_params(model)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     target_noise = float(run_config.get("target_noise", 0.0))
-    manager = TaskManager(task=task, model=model, optimizer=optimizer, device=device, target_noise=target_noise)
+    manager = TaskManager(
+        task=task,
+        model=model,
+        optimizer=optimizer,
+        device=device,
+        target_noise=target_noise,
+        overfit_single_batch=bool(run_config.get("overfit_single_batch", False)),
+    )
     steps = int(run_config.get("steps", SWEEP_DEFAULTS["steps"]))
     batch_size = int(run_config.get("batch_size", SWEEP_DEFAULTS["batch_size"]))
     eval_every = int(run_config.get("eval_every", SWEEP_DEFAULTS["eval_every"]))
     early_stopping = run_config.get("early_stopping", True)
     patience = int(run_config.get("patience", 3))
     no_hope_threshold = float(run_config.get("no_hope_threshold", 0.01))
-    no_hope_after_evals = int(run_config.get("no_hope_after_evals", 1))
-    no_hope_first_eval_at = run_config.get("no_hope_first_eval_at")
+    no_hope_after_evals = int(run_config.get("no_hope_after_evals", 3))
+    no_hope_first_eval_at = run_config.get("no_hope_first_eval_at", None)
     if no_hope_first_eval_at is not None:
         no_hope_first_eval_at = int(no_hope_first_eval_at)
     t0 = time.perf_counter()
@@ -336,7 +442,7 @@ def _run_one_experiment(run_config: dict, device: torch.device, run_id: int, sav
         patience=patience,
         no_hope_threshold=no_hope_threshold,
         no_hope_after_evals=no_hope_after_evals,
-        no_hope_first_eval_at=no_hope_first_eval_at if no_hope_first_eval_at is not None else 100,
+        no_hope_first_eval_at=no_hope_first_eval_at,
     )
     train_time_s = round(time.perf_counter() - t0, 2)
     final_train_loss, final_train_acc, final_val_loss, final_val_acc = _final_metrics_from_history(
@@ -364,7 +470,12 @@ def _run_one_experiment(run_config: dict, device: torch.device, run_id: int, sav
         "final_train_acc": final_train_acc,
         "final_val_loss": final_val_loss,
         "final_val_acc": final_val_acc,
+        "overfit_single_batch": bool(run_config.get("overfit_single_batch", False)),
     }
+    for k in _RUN_SUMMARY_OPTIONAL_KEYS:
+        v = run_config.get(k)
+        if not _is_missing_config_value(v):
+            row[k] = v
     if save_model:
         ckpt_path = _save_checkpoint(model, run_config, run_id=run_id)
         print(f"    Saved checkpoint to {ckpt_path}")
@@ -392,7 +503,14 @@ def cmd_run(args):
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     target_noise = getattr(args, "target_noise", None) or config.get("target_noise", 0.0)
-    manager = TaskManager(task=task, model=model, optimizer=optimizer, device=device, target_noise=target_noise)
+    manager = TaskManager(
+        task=task,
+        model=model,
+        optimizer=optimizer,
+        device=device,
+        target_noise=target_noise,
+        overfit_single_batch=bool(config.get("overfit_single_batch", False)),
+    )
     steps = getattr(args, "steps", 5000)
     batch_size = getattr(args, "batch_size", None) or config.get("batch_size", 64)
     eval_every = getattr(args, "eval_every", 1000)
@@ -400,12 +518,22 @@ def cmd_run(args):
     early_stopping = not getattr(args, "no_early_stop", False)
     if "early_stopping" in config:
         early_stopping = config["early_stopping"]
+    patience = int(config.get("patience", 3))
+    no_hope_threshold = float(config.get("no_hope_threshold", 0.01))
+    no_hope_after_evals = int(config.get("no_hope_after_evals", 3))
+    no_hope_first_eval_at = config.get("no_hope_first_eval_at", None)
+    if no_hope_first_eval_at is not None:
+        no_hope_first_eval_at = int(no_hope_first_eval_at)
     t0 = time.perf_counter()
     history, early_stopped, stopped_at_step = manager.train(
         n_steps=steps,
         batch_size=batch_size,
         eval_every=eval_every,
         early_stopping=early_stopping,
+        patience=patience,
+        no_hope_threshold=no_hope_threshold,
+        no_hope_after_evals=no_hope_after_evals,
+        no_hope_first_eval_at=no_hope_first_eval_at,
     )
     train_time_s = round(time.perf_counter() - t0, 2)
 
@@ -459,6 +587,7 @@ def cmd_run(args):
             "final_train_acc": final_train_acc,
             "final_val_loss": final_val_loss,
             "final_val_acc": final_val_acc,
+            "overfit_single_batch": run_config.get("overfit_single_batch", False),
         }
         results_path = append_results([row])
         print(f"Appended summary to {results_path}")

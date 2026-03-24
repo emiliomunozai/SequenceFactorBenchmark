@@ -14,8 +14,13 @@ class SinusoidalPE(nn.Module):
         pe = torch.zeros(max_len, d_model)
         pos = torch.arange(max_len).unsqueeze(1).float()
         div = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(pos * div)
-        pe[:, 1::2] = torch.cos(pos * div)
+        angles = pos * div
+        pe[:, 0::2] = torch.sin(angles)
+        # Odd d_model: one extra sin column; cos only on the paired odd indices.
+        if d_model % 2 == 0:
+            pe[:, 1::2] = torch.cos(angles)
+        else:
+            pe[:, 1::2] = torch.cos(angles[:, :-1])
         self.register_buffer("pe", pe.unsqueeze(0))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

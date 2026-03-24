@@ -1,4 +1,4 @@
-"""MLP expansion from bottleneck to per-step logits."""
+"""Map ``z`` to per-step logits without a giant ``Linear(z_dim, seq_len * d_model)``."""
 
 import torch
 import torch.nn as nn
@@ -7,7 +7,11 @@ from sfb.models.codec import SequenceDecoder
 
 
 class LinearSequenceDecoder(SequenceDecoder):
-    """Expand ``z`` to a full sequence with an MLP, then predict vocab per step."""
+    """Project ``z`` to width ``d_model``, add learned position embeddings, then LM head.
+
+    Parameter count is ``O(z_dim * d_model + seq_len * d_model + d_model * vocab_size)``
+    instead of ``O(z_dim * seq_len * d_model)`` from a single full-sequence expansion matrix.
+    """
 
     def __init__(
         self,
@@ -23,14 +27,17 @@ class LinearSequenceDecoder(SequenceDecoder):
         self.d_model = d_model
         self.vocab_size = vocab_size
         h = max(d_model * hidden_mult, z_dim)
-        self.net = nn.Sequential(
+        self.from_z = nn.Sequential(
             nn.Linear(z_dim, h),
             nn.GELU(),
-            nn.Linear(h, seq_len * d_model),
+            nn.Linear(h, d_model),
         )
+        self.pos_emb = nn.Parameter(torch.zeros(1, seq_len, d_model))
+        nn.init.normal_(self.pos_emb, std=0.02)
         self.head = nn.Linear(d_model, vocab_size)
 
-    def decode(self, z: torch.Tensor, seq_len: int) -> torch.Tensor:
+    def decode(self, z, seq_len: int):
         b = z.size(0)
-        h = self.net(z).view(b, seq_len, self.d_model)
-        return self.head(h)
+        base = self.from_z(z).unsqueeze(1)
+        pos = self.pos_emb[:, :seq_len, :].expand(b, -1, -1)
+        return self.head(base + pos)

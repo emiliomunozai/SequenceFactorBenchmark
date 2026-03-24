@@ -12,19 +12,39 @@ def _corrupt_targets(y: torch.Tensor, vocab_size: int, noise_rate: float) -> tor
 
 
 class TaskManager:
-    def __init__(self, task, model, optimizer, device, target_noise: float = 0.0):
+    def __init__(
+        self,
+        task,
+        model,
+        optimizer,
+        device,
+        target_noise: float = 0.0,
+        *,
+        overfit_single_batch: bool = False,
+    ):
         self.task = task
         self.model = model
         self.optimizer = optimizer
         self.device = device
         self.target_noise = float(target_noise)
+        self.overfit_single_batch = bool(overfit_single_batch)
+        self._fixed_batch: tuple[torch.Tensor, torch.Tensor] | None = None
         self.vocab_size = getattr(task.generator, "vocab_size", None)
         self.history = []
 
+    def _get_train_xy(self, batch_size: int):
+        if self.overfit_single_batch:
+            if self._fixed_batch is None:
+                x, y = self.task.get_batch(batch_size, split="train")
+                x, y = x.to(self.device), y.to(self.device)
+                self._fixed_batch = (x, y)
+            return self._fixed_batch
+        x, y = self.task.get_batch(batch_size, split="train")
+        return x.to(self.device), y.to(self.device)
+
     def train_step(self, batch_size: int):
         self.model.train()
-        x, y = self.task.get_batch(batch_size, split="train")
-        x, y = x.to(self.device), y.to(self.device)
+        x, y = self._get_train_xy(batch_size)
         if self.target_noise > 0 and self.vocab_size is not None:
             y = _corrupt_targets(y, self.vocab_size, self.target_noise)
 
@@ -39,8 +59,11 @@ class TaskManager:
     def eval_step(self, batch_size: int):
         self.model.eval()
         with torch.no_grad():
-            x, y = self.task.get_batch(batch_size, split="eval")
-            x, y = x.to(self.device), y.to(self.device)
+            if self.overfit_single_batch:
+                x, y = self._get_train_xy(batch_size)
+            else:
+                x, y = self.task.get_batch(batch_size, split="eval")
+                x, y = x.to(self.device), y.to(self.device)
             val_loss = self.task.loss(self.model, (x, y)).item()
             val_acc = self.task.evaluate(self.model, (x, y))
             return val_loss, val_acc
@@ -53,8 +76,8 @@ class TaskManager:
         early_stopping: bool = True,
         patience: int = 3,
         no_hope_threshold: float = 0.01,
-        no_hope_after_evals: int = 1,
-        no_hope_first_eval_at: int | None = 100,
+        no_hope_after_evals: int = 3,
+        no_hope_first_eval_at: int | None = None,
     ):
         """
         Train for up to n_steps. Returns (history, early_stopped, stopped_at_step).
@@ -62,6 +85,7 @@ class TaskManager:
         val_acc < no_hope_threshold after `no_hope_after_evals` evals.
         If no_hope_first_eval_at is set (e.g. 100), run one eval at that step and
         stop immediately if val_acc < no_hope_threshold (saves time on hopeless runs).
+        Set no_hope_first_eval_at to None to disable that shortcut (default).
         """
         self.history = []
         early_stopped = False
@@ -95,7 +119,7 @@ class TaskManager:
                     f"Step {current_step}: train_loss={train_loss:.4f}, train_acc={train_acc:.4f}, "
                     f"val_loss={val_loss:.4f}, val_acc={val_acc:.4f}"
                 )
-                if val_acc < no_hope_threshold:
+                if no_hope_threshold > 0 and val_acc < no_hope_threshold:
                     early_stopped = True
                     stopped_at_step = current_step
                     print(f"  Early stop (no hope at step {current_step}: val_acc={val_acc:.4f} < {no_hope_threshold})")
@@ -118,7 +142,11 @@ class TaskManager:
                 if early_stopping:
                     # No hope: still near-zero acc after a few evals
                     num_evals = len(self.history)
-                    if num_evals >= no_hope_after_evals and val_acc < no_hope_threshold:
+                    if (
+                        no_hope_threshold > 0
+                        and num_evals >= no_hope_after_evals
+                        and val_acc < no_hope_threshold
+                    ):
                         early_stopped = True
                         stopped_at_step = current_step
                         print(f"  Early stop (no hope: val_acc={val_acc:.4f} < {no_hope_threshold} after {num_evals} evals)")
