@@ -1,4 +1,4 @@
-"""LSTM encoder with an explicit projection into the fixed bottleneck."""
+"""Bidirectional LSTM encoder with a fixed bottleneck projection."""
 
 from torch import nn
 
@@ -7,11 +7,11 @@ from sfb.registry import register_encoder
 
 
 @register_encoder(
-    "lstm",
+    "bi_lstm",
     constructor_params=["d_model", "bottleneck_dim", "n_layers"],
     param_defaults={"n_layers": 1},
 )
-class LSTMSequenceEncoder(SequenceEncoder):
+class BiLSTMSequenceEncoder(SequenceEncoder):
     def __init__(
         self,
         vocab_size: int,
@@ -21,16 +21,20 @@ class LSTMSequenceEncoder(SequenceEncoder):
         n_layers: int,
     ):
         super().__init__(vocab_size, seq_len)
-        self.d_model = d_model
-        self.bottleneck_dim = bottleneck_dim
-        self.n_layers = n_layers
         self.embed = nn.Embedding(vocab_size, d_model)
-        self.rnn = nn.LSTM(d_model, d_model, num_layers=n_layers, batch_first=True)
-        self.to_bottleneck = nn.Linear(d_model, bottleneck_dim)
+        self.rnn = nn.LSTM(
+            d_model,
+            d_model,
+            num_layers=n_layers,
+            batch_first=True,
+            bidirectional=True,
+        )
+        self.to_bottleneck = nn.Linear(2 * d_model, bottleneck_dim)
         self.out_dim = bottleneck_dim
 
     def encode(self, x):
         x = self.embed(x)
         _, (h_n, _) = self.rnn(x)
-        z = self.to_bottleneck(h_n[-1])
+        h_last = h_n[-2:].transpose(0, 1).reshape(x.size(0), -1)
+        z = self.to_bottleneck(h_last)
         return EncoderOutput(z=z)

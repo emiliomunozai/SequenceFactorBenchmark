@@ -18,4 +18,8 @@
 12. [Pending] JEPA reference and idea
 13. [Done] Model predict example
 14. [Done] Encoder decoder and bottleneck logic throught the repo
-     
+15. [Done] Borrador overleaf (debe motivar la falta del benchmark, contribucion principal biblioteca, analisis de ejemplo)
+16. [Pending] Asegurar tema de computo con miguel angel
+17. [Pending] New task: Estados originales y version comprimida (realmente el copy task es la version offline, y la nueva seria online)
+18. [Pending] Mas pasos
+19. [Pending] Teacher enforcing

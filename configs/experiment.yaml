@@ -1,0 +1,33 @@
+# Multi model example with explicit encoder/decoder pairs.
+# Run: sfb run -c configs/experiment.yaml
+
+task: copy
+loss: cross_entropy
+sequence_length: [8, 12, 16, 20, 24, 28, 32]
+vocabulary_size: [8, 12, 16, 20, 24, 28, 32]
+input_noise: [0.0]
+corruption_mode: replace
+batch_size: 128
+steps: 10000
+eval_every: 200
+seed: 42
+early_stopping: true
+patience: 5
+no_hope_after_evals: 100
+no_hope_threshold: 0.01
+
+models:
+  - encoder: mlp
+    decoder: mlp
+
+  - encoder: lstm
+    decoder: lstm
+    n_layers: 1
+
+  - encoder: transformer
+    decoder: rnn
+    n_layers: 2
+    n_heads: 4
+
+d_model: 64
+bottleneck_dim: 64

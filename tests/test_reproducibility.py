@@ -1,223 +1,162 @@
-"""
-Unit tests to verify that experiments are reproducible given a fixed config and seed.
-"""
+"""Regression tests for the FB-Bench run path."""
+
 import math
 
 import torch
 
 from sfb.cli import (
-    _run_one_experiment,
     _config_signature,
-    _expand_sweep_config,
-    _format_model_column,
+    _expand_sweep,
+    _model_label,
+    _run_one,
 )
 
-
-# Minimal config for fast reproducibility tests.
 REPRO_CONFIG = {
-    "model": "simple_nn",
+    "encoder": "mlp",
+    "decoder": "mlp",
     "task": "sorting",
     "loss": "cross_entropy",
     "sequence_length": 8,
     "vocabulary_size": 16,
     "d_model": 16,
+    "bottleneck_dim": 16,
+    "n_layers": 1,
+    "n_heads": 4,
     "batch_size": 8,
     "steps": 20,
     "eval_every": 20,
     "seed": 42,
 }
 
-
-def _metric_keys():
-    """Keys that should match across runs for the same config."""
-    return ["final_train_loss", "final_train_acc", "final_val_loss", "final_val_acc"]
+METRIC_KEYS = [
+    "final_train_loss",
+    "final_train_acc",
+    "final_val_clean_loss",
+    "final_val_clean_acc",
+    "final_val_noisy_loss",
+    "final_val_noisy_acc",
+]
 
 
 class TestReproducibility:
-    """Verify same config + seed produces identical results."""
-
     def test_sorting_task_reproducible(self):
-        """Running sorting task twice with same seed yields identical metrics."""
         device = torch.device("cpu")
-        row1 = _run_one_experiment(REPRO_CONFIG, device, run_id=0)
-        row2 = _run_one_experiment(REPRO_CONFIG, device, run_id=1)
+        row1, _, _ = _run_one(REPRO_CONFIG, device, run_id=0)
+        row2, _, _ = _run_one(REPRO_CONFIG, device, run_id=1)
 
-        for key in _metric_keys():
+        for key in METRIC_KEYS:
             assert row1[key] == row2[key], f"{key} differs: {row1[key]} vs {row2[key]}"
 
-    def test_model_column_includes_params(self):
-        """Output row has model column with params, e.g. simple_nn(d_model=16)."""
-        device = torch.device("cpu")
-        row = _run_one_experiment(REPRO_CONFIG, device, run_id=0)
-        assert row["model"] == "simple_nn(d_model=16)"
+    def test_model_column_includes_encoder_decoder(self):
+        assert _model_label(REPRO_CONFIG, 16) == "mlp->mlp(d_model=16, bottleneck_dim=16, n_layers=1)"
 
     def test_copy_task_reproducible(self):
-        """Running copy task twice with same seed yields identical metrics."""
-        config = {**REPRO_CONFIG, "task": "copy"}
         device = torch.device("cpu")
+        config = {**REPRO_CONFIG, "task": "copy", "encoder": "lstm", "decoder": "lstm"}
+        row1, _, _ = _run_one(config, device, run_id=0)
+        row2, _, _ = _run_one(config, device, run_id=1)
 
-        row1 = _run_one_experiment(config, device, run_id=0)
-        row2 = _run_one_experiment(config, device, run_id=1)
-
-        for key in _metric_keys():
+        for key in METRIC_KEYS:
             assert row1[key] == row2[key], f"{key} differs: {row1[key]} vs {row2[key]}"
 
     def test_reverse_task_reproducible(self):
-        """Running reverse task twice with same seed yields identical metrics."""
-        config = {**REPRO_CONFIG, "task": "reverse", "model": "gru"}
         device = torch.device("cpu")
+        config = {**REPRO_CONFIG, "task": "reverse", "encoder": "rnn", "decoder": "rnn"}
+        row1, _, _ = _run_one(config, device, run_id=0)
+        row2, _, _ = _run_one(config, device, run_id=1)
 
-        row1 = _run_one_experiment(config, device, run_id=0)
-        row2 = _run_one_experiment(config, device, run_id=1)
-
-        for key in _metric_keys():
+        for key in METRIC_KEYS:
             assert row1[key] == row2[key], f"{key} differs: {row1[key]} vs {row2[key]}"
 
     def test_different_seeds_diverge(self):
-        """Different seeds produce different results (sanity check)."""
         device = torch.device("cpu")
-        config1 = {**REPRO_CONFIG, "seed": 123}
-        config2 = {**REPRO_CONFIG, "seed": 456}
+        row1, _, _ = _run_one({**REPRO_CONFIG, "seed": 123}, device, run_id=0)
+        row2, _, _ = _run_one({**REPRO_CONFIG, "seed": 456}, device, run_id=1)
 
-        row1 = _run_one_experiment(config1, device, run_id=0)
-        row2 = _run_one_experiment(config2, device, run_id=0)
-
-        # At least one metric should differ
-        diffs = [row1[k] != row2[k] for k in _metric_keys()]
+        diffs = [row1[key] != row2[key] for key in METRIC_KEYS]
         assert any(diffs), "Expected different seeds to produce different results"
 
-    def test_target_noise_runs(self):
-        """target_noise in config runs without error and yields finite metrics."""
+    def test_input_noise_runs(self):
         device = torch.device("cpu")
-        cfg_clean = {**REPRO_CONFIG, "target_noise": 0.0}
-        cfg_noisy = {**REPRO_CONFIG, "target_noise": 0.2}
-
-        row_clean = _run_one_experiment(cfg_clean, device, run_id=0)
-        row_noisy = _run_one_experiment(cfg_noisy, device, run_id=1)
+        row_clean, _, _ = _run_one({**REPRO_CONFIG, "input_noise": 0.0}, device, run_id=0)
+        row_noisy, _, _ = _run_one({**REPRO_CONFIG, "input_noise": 0.2}, device, run_id=1)
 
         for row in (row_clean, row_noisy):
-            for key in _metric_keys():
-                v = row[key]
-                assert isinstance(v, (int, float)) and math.isfinite(float(v)), f"{key}={v!r} not finite"
+            for key in METRIC_KEYS:
+                value = row[key]
+                assert isinstance(value, (int, float)) and math.isfinite(float(value))
+
+    def test_transformer_pair_reproducible(self):
+        device = torch.device("cpu")
+        config = {**REPRO_CONFIG, "task": "copy", "encoder": "transformer", "decoder": "transformer"}
+        row1, _, _ = _run_one(config, device, run_id=0)
+        row2, _, _ = _run_one(config, device, run_id=1)
+
+        for key in METRIC_KEYS:
+            assert row1[key] == row2[key], f"{key} differs: {row1[key]} vs {row2[key]}"
 
 
 class TestConfigSignature:
-    """Verify config signature for sweep deduplication."""
-
-    def test_run_config_and_row_match(self):
-        """Signature from run_config (sequence_length/vocabulary_size) matches row (seq_len/vocab_size)."""
-        run_config = {
-            "model": "simple_nn", "task": "sorting", "sequence_length": 16,
-            "vocabulary_size": 32, "target_noise": 0.0, "d_model": 32, "seed": 42,
-        }
-        row = {
-            "model": "simple_nn", "task": "sorting", "seq_len": 16,
-            "vocab_size": 32, "target_noise": 0.0, "d_model": 32, "seed": 42,
-        }
-        assert _config_signature(run_config) == _config_signature(row)
-
-    def test_different_target_noise_differs(self):
-        """Different target_noise produces different config signatures."""
-        cfg_a = {"model": "simple_nn", "task": "sorting", "target_noise": 0.0}
-        cfg_b = {"model": "simple_nn", "task": "sorting", "target_noise": 0.2}
-        assert _config_signature(cfg_a) != _config_signature(cfg_b)
-
-    def test_different_configs_differ(self):
-        """Different configs produce different signatures."""
-        cfg_a = {"model": "simple_nn", "task": "sorting", "sequence_length": 32, "vocabulary_size": 64}
-        cfg_b = {"model": "simple_nn", "task": "sorting", "sequence_length": 64, "vocabulary_size": 64}
-        assert _config_signature(cfg_a) != _config_signature(cfg_b)
-
-    def test_different_models_differ(self):
-        """Different models produce different signatures."""
-        cfg_a = {"model": "simple_nn", "task": "sorting", "sequence_length": 32}
-        cfg_b = {"model": "other_model", "task": "sorting", "sequence_length": 32}
-        assert _config_signature(cfg_a) != _config_signature(cfg_b)
-
-    def test_yaml_run_config_without_overfit_matches_csv_row_false(self):
-        """Sweep YAML often omits overfit_single_batch; results CSV stores False explicitly."""
-        yaml_rc = {
-            "model": "simple_nn",
-            "task": "copy",
-            "loss": "cross_entropy",
-            "sequence_length": 32,
+    def test_same_config_matches(self):
+        cfg = {
+            "encoder": "mlp",
+            "decoder": "lstm",
+            "task": "sorting",
+            "sequence_length": 16,
             "vocabulary_size": 32,
-            "d_model": 64,
-            "d_bottleneck": 32,
-            "decoder": "linear",
-            "batch_size": 128,
-            "steps": 8000,
-            "eval_every": 1000,
-            "seed": 42,
-            "target_noise": 0.0,
+            "input_noise": 0.0,
+            "d_model": 32,
+            "bottleneck_dim": 16,
             "n_layers": 1,
-        }
-        csv_row = {
-            "model": "simple_nn(d_model=64, d_bottleneck=32, decoder=linear)",
-            "task": "copy",
-            "loss": "cross_entropy",
-            "seq_len": 32,
-            "vocab_size": 32,
-            "d_model": 64,
-            "n_layers": 1,
-            "batch_size": 128,
-            "steps": 8000,
-            "eval_every": 1000,
+            "n_heads": 4,
             "seed": 42,
-            "target_noise": 0.0,
-            "overfit_single_batch": False,
         }
-        assert _config_signature(yaml_rc) == _config_signature(csv_row)
+        assert _config_signature(cfg) == _config_signature(dict(cfg))
+
+    def test_different_encoder_decoder_pairs_differ(self):
+        cfg_a = {"encoder": "mlp", "decoder": "mlp", "task": "sorting"}
+        cfg_b = {"encoder": "rnn", "decoder": "mlp", "task": "sorting"}
+        assert _config_signature(cfg_a) != _config_signature(cfg_b)
+
+    def test_different_input_noise_differs(self):
+        cfg_a = {"encoder": "mlp", "decoder": "mlp", "task": "sorting", "input_noise": 0.0}
+        cfg_b = {"encoder": "mlp", "decoder": "mlp", "task": "sorting", "input_noise": 0.2}
+        assert _config_signature(cfg_a) != _config_signature(cfg_b)
+
+    def test_transformer_head_count_affects_signature(self):
+        cfg_a = {"encoder": "transformer", "decoder": "mlp", "task": "sorting", "n_heads": 2}
+        cfg_b = {"encoder": "transformer", "decoder": "mlp", "task": "sorting", "n_heads": 4}
+        assert _config_signature(cfg_a) != _config_signature(cfg_b)
 
 
-class TestExpandSweepConfig:
-    """Verify sweep config expansion."""
-
+class TestExpandSweep:
     def test_all_fixed_returns_single_config(self):
-        """No list values yields one config."""
-        config = {"task": "sorting", "sequence_length": 32}
-        result = _expand_sweep_config(config)
+        result = _expand_sweep({"task": "sorting", "encoder": "mlp", "decoder": "mlp", "sequence_length": 32})
         assert len(result) == 1
         assert result[0]["task"] == "sorting"
         assert result[0]["sequence_length"] == 32
 
     def test_list_expands_cartesian(self):
-        """List values expand to Cartesian product."""
-        config = {
-            "model": "simple_nn",
+        result = _expand_sweep({
+            "encoder": ["mlp", "lstm"],
+            "decoder": ["mlp", "rnn"],
             "task": ["sorting", "copy"],
+        })
+        assert len(result) == 8
+        assert {r["encoder"] for r in result} == {"mlp", "lstm"}
+        assert {r["decoder"] for r in result} == {"mlp", "rnn"}
+        assert {r["task"] for r in result} == {"sorting", "copy"}
+
+    def test_models_block_expands_explicit_pairs(self):
+        result = _expand_sweep({
+            "task": "copy",
             "sequence_length": [8, 16],
-        }
-        result = _expand_sweep_config(config)
-        assert len(result) == 4  # 2 * 2
-        tasks = {r["task"] for r in result}
-        seq_lens = {r["sequence_length"] for r in result}
-        assert tasks == {"sorting", "copy"}
-        assert seq_lens == {8, 16}
-        assert all(r.get("model") == "simple_nn" for r in result)
-
-    def test_format_model_column(self):
-        """_format_model_column produces simple_nn(d_model=32)."""
-        config = {"model": "simple_nn", "task": "sorting", "d_model": 32}
-        assert _format_model_column(config) == "simple_nn(d_model=32)"
-
-    def test_model_params_flattened(self):
-        """model_params.d_model is flattened into d_model for expansion."""
-        config = {
-            "model": "simple_nn", "task": "sorting", "sequence_length": 8,
-            "model_params": {"d_model": 32},
-        }
-        result = _expand_sweep_config(config)
-        assert len(result) == 1
-        assert result[0]["d_model"] == 32
-
-    def test_target_noise_expands_in_sweep(self):
-        """target_noise as list expands in sweep config."""
-        config = {
-            "model": "simple_nn", "task": "sorting", "sequence_length": 8,
-            "target_noise": [0.0, 0.1, 0.2],
-        }
-        result = _expand_sweep_config(config)
-        assert len(result) == 3
-        noises = {r["target_noise"] for r in result}
-        assert noises == {0.0, 0.1, 0.2}
+            "models": [
+                {"encoder": "mlp", "decoder": "mlp"},
+                {"encoder": "lstm", "decoder": "transformer", "n_layers": 2},
+            ],
+        })
+        assert len(result) == 4
+        pairs = {(r["encoder"], r["decoder"]) for r in result}
+        assert pairs == {("mlp", "mlp"), ("lstm", "transformer")}
+        assert all(r["task"] == "copy" for r in result)

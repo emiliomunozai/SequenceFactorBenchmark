@@ -11,9 +11,17 @@ class BaseTask(ABC):
     loss_fn: Callable[..., torch.Tensor]
 
     @abstractmethod
-    def get_batch(self, batch_size: int, split: str = "train"):
+    def get_batch(
+        self,
+        batch_size: int,
+        split: str = "train",
+        *,
+        apply_input_corruption: bool | None = None,
+    ):
         """
         split: 'train' | 'eval'
+        apply_input_corruption: if None, corrupt on train split only; if False, return
+            clean input tokens.
         """
         pass
 

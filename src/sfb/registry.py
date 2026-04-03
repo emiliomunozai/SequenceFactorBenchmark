@@ -1,35 +1,48 @@
 """
-Registry for models and tasks. Models and tasks self-register via decorators.
-No CLI changes needed when adding a new model or task.
+Registry for FB-Bench components and tasks.
 
-To add a model: add `models/composed/my_model.py` with @register_model("name", ...) on the class
-(encoders / decoders go under `models/encoders` and `models/decoders`).
-To add a task: create `tasks/my_task.py` with @register_task("name", description="...") on the class.
+Encoders and decoders self-register so configs can choose them independently.
+Tasks keep the same registration pattern as before.
 """
 import importlib
 import pkgutil
 from typing import Any
 
-# name -> {cls, display_params, constructor_params}
-MODELS: dict[str, dict[str, Any]] = {}
+# name -> {cls, constructor_params, param_defaults}
+ENCODERS: dict[str, dict[str, Any]] = {}
+DECODERS: dict[str, dict[str, Any]] = {}
 # name -> {cls, description}
 TASKS: dict[str, dict[str, Any]] = {}
 
-_models_loaded = False
+_encoders_loaded = False
+_decoders_loaded = False
 _tasks_loaded = False
 
 
-def _load_models():
-    global _models_loaded
-    if _models_loaded:
+def _load_encoders():
+    global _encoders_loaded
+    if _encoders_loaded:
         return
-    import sfb.models as models_pkg
-    for _, modname, _ in pkgutil.iter_modules(models_pkg.__path__, prefix="sfb.models."):
+    import sfb.models.encoders as encoders_pkg
+
+    for _, modname, _ in pkgutil.iter_modules(
+        encoders_pkg.__path__, prefix="sfb.models.encoders."
+    ):
         importlib.import_module(modname)
-    import sfb.models.composed as composed_pkg
-    for _, modname, _ in pkgutil.iter_modules(composed_pkg.__path__, prefix="sfb.models.composed."):
+    _encoders_loaded = True
+
+
+def _load_decoders():
+    global _decoders_loaded
+    if _decoders_loaded:
+        return
+    import sfb.models.decoders as decoders_pkg
+
+    for _, modname, _ in pkgutil.iter_modules(
+        decoders_pkg.__path__, prefix="sfb.models.decoders."
+    ):
         importlib.import_module(modname)
-    _models_loaded = True
+    _decoders_loaded = True
 
 
 def _load_tasks():
@@ -43,21 +56,53 @@ def _load_tasks():
     _tasks_loaded = True
 
 
-def register_model(
+def _component_meta(
+    *,
+    constructor_params: list[str] | None = None,
+    param_defaults: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "constructor_params": constructor_params or [],
+        "param_defaults": param_defaults or {},
+    }
+
+
+def register_encoder(
     name: str,
     *,
-    display_params: list[str] | None = None,
     constructor_params: list[str] | None = None,
     param_defaults: dict[str, Any] | None = None,
 ):
-    """Register a model class. Use as @register_model('gru', display_params=[...], constructor_params=[...])."""
+    """Register a sequence encoder."""
 
     def decorator(cls):
-        MODELS[name] = {
+        ENCODERS[name] = {
             "cls": cls,
-            "display_params": display_params or ["d_model"],
-            "constructor_params": constructor_params or ["vocab_size", "seq_len", "d_model"],
-            "param_defaults": param_defaults or {},
+            **_component_meta(
+                constructor_params=constructor_params,
+                param_defaults=param_defaults,
+            ),
+        }
+        return cls
+
+    return decorator
+
+
+def register_decoder(
+    name: str,
+    *,
+    constructor_params: list[str] | None = None,
+    param_defaults: dict[str, Any] | None = None,
+):
+    """Register a sequence decoder."""
+
+    def decorator(cls):
+        DECODERS[name] = {
+            "cls": cls,
+            **_component_meta(
+                constructor_params=constructor_params,
+                param_defaults=param_defaults,
+            ),
         }
         return cls
 
@@ -74,10 +119,16 @@ def register_task(name: str, *, description: str = ""):
     return decorator
 
 
-def get_model(name: str):
-    """Get model class and metadata. Loads models on first call."""
-    _load_models()
-    return MODELS.get(name)
+def get_encoder(name: str):
+    """Get encoder class and metadata."""
+    _load_encoders()
+    return ENCODERS.get(name)
+
+
+def get_decoder(name: str):
+    """Get decoder class and metadata."""
+    _load_decoders()
+    return DECODERS.get(name)
 
 
 def get_task(name: str):
@@ -86,9 +137,14 @@ def get_task(name: str):
     return TASKS.get(name)
 
 
-def all_model_names() -> list[str]:
-    _load_models()
-    return list(MODELS.keys())
+def all_encoder_names() -> list[str]:
+    _load_encoders()
+    return list(ENCODERS.keys())
+
+
+def all_decoder_names() -> list[str]:
+    _load_decoders()
+    return list(DECODERS.keys())
 
 
 def all_task_names() -> list[str]:
@@ -97,18 +153,24 @@ def all_task_names() -> list[str]:
 
 
 def all_model_param_keys() -> set[str]:
-    """Union of constructor params from all models (for sweep config)."""
-    _load_models()
+    """Union of sweep-relevant constructor params from active encoders and decoders."""
+    _load_encoders()
+    _load_decoders()
     keys: set[str] = set()
-    for info in MODELS.values():
+    for info in ENCODERS.values():
         keys.update(info.get("constructor_params", []))
-    return keys - {"vocab_size", "seq_len"}  # these come from sequence_length, vocabulary_size
+    for info in DECODERS.values():
+        keys.update(info.get("constructor_params", []))
+    return keys - {"vocab_size", "seq_len", "z_dim"}
 
 
 def param_defaults_from_models() -> dict[str, Any]:
-    """Merge param_defaults from all models (for sweep defaults)."""
-    _load_models()
+    """Merge param defaults from active encoders and decoders."""
+    _load_encoders()
+    _load_decoders()
     merged: dict[str, Any] = {}
-    for info in MODELS.values():
+    for info in ENCODERS.values():
+        merged.update(info.get("param_defaults", {}))
+    for info in DECODERS.values():
         merged.update(info.get("param_defaults", {}))
     return merged

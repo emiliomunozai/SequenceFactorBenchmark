@@ -1,0 +1,40 @@
+# Single-batch sanity test with explicit model definitions.
+# Run: sfb run -c configs/sanity_test.yaml -o data/results/sanity_test.csv
+
+task: copy
+loss: cross_entropy
+sequence_length: 16
+vocabulary_size: 32
+input_noise: 0.0
+corruption_mode: replace
+batch_size: 8
+steps: 600
+eval_every: 100
+seed: 42
+
+early_stopping: false
+no_hope_threshold: 0
+
+models:
+  - encoder: mlp
+    decoder: mlp
+
+  - encoder: lstm
+    decoder: lstm
+    n_layers: 1
+
+  - encoder: bi_lstm
+    decoder: lstm
+    n_layers: 1
+
+  - encoder: rnn
+    decoder: rnn
+    n_layers: 1
+
+  - encoder: transformer
+    decoder: transformer
+    n_layers: 2
+    n_heads: 4
+
+d_model: 64
+bottleneck_dim: 32

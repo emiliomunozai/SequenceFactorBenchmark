@@ -1,75 +1,51 @@
-"""Transformer over the full sequence, mean-pool, project to ``d_bottleneck``."""
-
-import math
+"""Transformer encoder with a learned bottleneck token."""
 
 import torch
-import torch.nn as nn
+from torch import nn
 
-from sfb.models.codec import EncoderOutput, SequenceEncoder
-
-
-class SinusoidalPE(nn.Module):
-    def __init__(self, d_model: int, max_len: int = 8192):
-        super().__init__()
-        pe = torch.zeros(max_len, d_model)
-        pos = torch.arange(max_len).unsqueeze(1).float()
-        div = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        angles = pos * div
-        pe[:, 0::2] = torch.sin(angles)
-        # Odd d_model: one extra sin column; cos only on the paired odd indices.
-        if d_model % 2 == 0:
-            pe[:, 1::2] = torch.cos(angles)
-        else:
-            pe[:, 1::2] = torch.cos(angles[:, :-1])
-        self.register_buffer("pe", pe.unsqueeze(0))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x + self.pe[:, : x.size(1)]
+from sfb.models.bottleneck import EncoderOutput, SequenceEncoder
+from sfb.registry import register_encoder
 
 
-class TransformerBlock(nn.Module):
-    def __init__(self, d_model: int, n_heads: int, dropout: float = 0.0):
-        super().__init__()
-        self.norm1 = nn.LayerNorm(d_model)
-        self.attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.ffn = nn.Sequential(
-            nn.Linear(d_model, d_model * 4),
-            nn.GELU(),
-            nn.Linear(d_model * 4, d_model),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h = self.norm1(x)
-        x = x + self.attn(h, h, h, need_weights=False)[0]
-        x = x + self.ffn(self.norm2(x))
-        return x
-
-
+@register_encoder(
+    "transformer",
+    constructor_params=["d_model", "bottleneck_dim", "n_layers", "n_heads"],
+    param_defaults={"n_layers": 2, "n_heads": 4},
+)
 class TransformerSequenceEncoder(SequenceEncoder):
     def __init__(
         self,
         vocab_size: int,
         seq_len: int,
         d_model: int,
-        d_bottleneck: int,
-        n_layers: int,
-        n_heads: int,
+        bottleneck_dim: int,
+        n_layers: int = 2,
+        n_heads: int = 4,
     ):
         super().__init__(vocab_size, seq_len)
         self.embed = nn.Embedding(vocab_size, d_model)
-        self.pe = SinusoidalPE(d_model, max_len=seq_len)
-        self.blocks = nn.ModuleList(
-            [TransformerBlock(d_model, n_heads) for _ in range(n_layers)]
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
+        self.pos_emb = nn.Parameter(torch.zeros(1, seq_len + 1, d_model))
+        nn.init.normal_(self.cls_token, std=0.02)
+        nn.init.normal_(self.pos_emb, std=0.02)
+        layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=n_heads,
+            dim_feedforward=4 * d_model,
+            dropout=0.0,
+            batch_first=True,
         )
+        self.encoder = nn.TransformerEncoder(layer, num_layers=n_layers)
         self.norm = nn.LayerNorm(d_model)
-        self.to_bottleneck = nn.Linear(d_model, d_bottleneck)
-        self.out_dim = d_bottleneck
+        self.to_bottleneck = nn.Linear(d_model, bottleneck_dim)
+        self.out_dim = bottleneck_dim
 
     def encode(self, x):
-        h = self.pe(self.embed(x))
-        for block in self.blocks:
-            h = block(h)
-        h = self.norm(h).mean(dim=1)
+        cls = self.cls_token.expand(x.size(0), -1, -1)
+        tokens = self.embed(x)
+        h = torch.cat([cls, tokens], dim=1)
+        h = h + self.pos_emb[:, : h.size(1), :]
+        h = self.encoder(h)
+        h = self.norm(h[:, 0, :])
         z = self.to_bottleneck(h)
         return EncoderOutput(z=z)
