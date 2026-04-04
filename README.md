@@ -149,3 +149,69 @@ Add encoders in `src/sfb/models/encoders/`, decoders in `src/sfb/models/decoders
 Contract:
 - Encoders return `EncoderOutput(z=...)` with shape `[B, bottleneck_dim]`
 - Decoders map that latent to logits `[B, L, V]`
+
+## Project description
+
+### Motivation
+
+Comparing sequence model architectures is difficult when models differ simultaneously in depth, width, parameter count, and representational capacity. Performance differences may reflect architectural merit or simply differences in information throughput. FB-Bench isolates architecture as the experimental variable by forcing every model through a fixed-dimensional bottleneck, equalizing the information budget available for sequence reconstruction.
+
+### Formulation
+
+Let \( x \in \{0, \dots, V{-}1\}^L \) be an input sequence of length \( L \) over a vocabulary of size \( V \). The benchmark decomposes every model into two stages:
+
+1. **Encoder** \( f_\theta : \mathbb{Z}^{L} \to \mathbb{R}^{d} \). Maps the discrete input to a single latent vector \( z = f_\theta(x) \) of fixed dimension \( d \) (the bottleneck dimension), regardless of sequence length.
+2. **Decoder** \( g_\phi : \mathbb{R}^{d} \to \mathbb{R}^{L \times V} \). Reconstructs token-level logits from \( z \) alone, with no residual connection or skip path from the encoder.
+
+The full model is their composition \( g_\phi(f_\theta(x)) \), trained end-to-end with a token-level loss.
+
+### Tasks
+
+Each task defines a deterministic mapping from the clean input \( x \) to a target sequence \( y \):
+
+| Task | Target | What it measures |
+|------|--------|------------------|
+| **Copy** | \( y = x \) | Whether the bottleneck can preserve token identity and order |
+| **Reverse** | \( y_t = x_{L-1-t} \) | Whether the bottleneck supports non-trivial reordering |
+| **Sorting** | \( y = \text{sort}(x) \) | Whether the bottleneck captures distributional content independent of position |
+
+Input sequences are sampled uniformly at random from \( \{0, \dots, V{-}1\}^L \). Targets are always computed from the clean (uncorrupted) input.
+
+### Input corruption
+
+To probe robustness, the encoder input may be corrupted at a configurable noise rate \( \eta \in [0, 1] \). Each token is independently corrupted with probability \( \eta \). Two corruption modes are supported:
+
+- **Replace**: the token is replaced by a uniformly random token guaranteed to differ from the original.
+- **Mask**: the token is replaced by a fixed mask token ID.
+
+Corruption is applied to the encoder input only; the target \( y \) is always derived from the clean sequence. During training, corruption is applied by default. At evaluation time, two scores are reported: clean (no corruption) and noisy (corruption applied), allowing separation of modeling capacity from noise robustness.
+
+### Loss functions
+
+- **Cross-entropy**: standard token-level cross-entropy over the vocabulary, averaged across positions and batch.
+- **Shift-tolerant cross-entropy**: at each position \( t \), the one-hot target is replaced by a soft distribution blending targets from neighboring positions \( [t{-}w, t{+}w] \), weighted by a Gaussian kernel with standard deviation \( \sigma = w/2 \). This relaxes the positional alignment requirement: a copy shifted by one position incurs a small penalty rather than full cross-entropy loss, while a perfectly aligned prediction still achieves the global optimum.
+
+### Experimental protocol
+
+A sweep configuration specifies sets of values for each hyperparameter (encoder, decoder, task, sequence length, vocabulary size, noise rate, etc.). The benchmark takes the Cartesian product of all list-valued fields and trains one model per combination. For each run:
+
+1. A random seed is fixed (when provided) for reproducibility.
+2. The encoder and decoder are instantiated with shared architectural parameters (\( d_\text{model} \), \( d \), number of layers, number of attention heads where applicable).
+3. The model is trained with Adam (lr = 1e-3) for a fixed number of steps.
+4. At regular intervals, clean and noisy validation accuracy are computed. Early stopping monitors noisy validation accuracy with a patience window and a no-hope threshold (minimum accuracy after a configurable number of evaluations).
+5. The final reported metrics are taken from the last evaluation step, or from the best noisy validation checkpoint if early stopping triggered.
+
+### Measured quantities
+
+Each run produces a summary row containing:
+
+- Architecture identifiers (encoder, decoder, task, loss)
+- Data parameters (sequence length, vocabulary size, noise rate, corruption mode)
+- Model parameters (d_model, bottleneck_dim, n_layers, n_heads, trainable parameter count)
+- Training parameters (batch size, steps, eval frequency, seed)
+- Final metrics: train loss/accuracy, clean validation loss/accuracy, noisy validation loss/accuracy
+- Training time, early stopping status, and step at which training stopped
+
+### Controlled variables
+
+The bottleneck dimension \( d \) is the primary controlled variable. By fixing \( d \) across architectures, the benchmark ensures that all models operate under the same information constraint. Differences in final accuracy reflect how effectively each encoder-decoder family utilizes a fixed-capacity latent representation, rather than differences in raw model size or width.

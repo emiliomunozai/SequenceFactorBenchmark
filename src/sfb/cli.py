@@ -49,7 +49,6 @@ SWEEP_PARAM_KEYS = [
     "input_noise",
     "corruption_mode",
     "mask_token_id",
-    "pad_token_id",
     *sorted(all_model_param_keys()),
     "batch_size",
     "steps",
