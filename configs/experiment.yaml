@@ -3,12 +3,12 @@
 
 task: copy
 loss: cross_entropy
-sequence_length: [8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40]
-vocabulary_size: [8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40]
-input_noise: [0.0]
+sequence_length: [16, 32, 48, 64, 80, 96]
+vocabulary_size: [16, 32, 48, 64, 80, 96]
+input_noise: [0.0, 0.1, 0.2]
 corruption_mode: replace
 batch_size: 128
-steps: 10000
+steps: 15000
 eval_every: 200
 seed: 42
 early_stopping: true
@@ -30,4 +30,4 @@ models:
     n_heads: 4
 
 d_model: 128
-bottleneck_dim: 64
+bottleneck_dim: [32, 64, 128]

@@ -342,7 +342,8 @@ def cmd_run(args):
         print(
             f"  [{i}/{len(to_run)}] encoder={cfg['encoder']} "
             f"decoder={cfg['decoder']} task={cfg['task']} "
-            f"seq_len={cfg['sequence_length']} vocab={cfg['vocabulary_size']}"
+            f"seq_len={cfg['sequence_length']} vocab={cfg['vocabulary_size']} "
+            f"input_noise={cfg['input_noise']}"
         )
         run_id = base_id + i - 1
         row, history, ckpt_path = _run_one(
